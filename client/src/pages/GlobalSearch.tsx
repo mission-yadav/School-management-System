@@ -7,17 +7,17 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/components/ui/toast';
+import { SearchModeToggle, type SearchMode as Mode } from '@/components/SearchModeToggle';
 
 const TYPE_ICONS: Record<string, string> = {
   student: '🎓', teacher: '👩‍🏫', parent: '👪', receipt: '🧾',
   certificate: '📜', book: '📚', vehicle: '🚌',
 };
 
-type Mode = 'name' | 'iemis';
-const MODES: { key: Mode; label: string; hint: string }[] = [
-  { key: 'name', label: 'Name', hint: 'Search everything by name…' },
-  { key: 'iemis', label: 'IEMIS', hint: 'Enter an IEMIS student ID…' },
-];
+const HINTS: Record<Mode, string> = {
+  name: 'Search everything by name…',
+  iemis: 'Enter an IEMIS student ID…',
+};
 
 export default function GlobalSearch() {
   const { toast } = useToast();
@@ -49,32 +49,17 @@ export default function GlobalSearch() {
     if (r.type === 'student') navigate(`/students/${r.id}`);
   }
 
-  const activeMode = MODES.find((m) => m.key === mode)!;
-
   return (
     <div className="space-y-6">
       <PageHeader title="Global Search" subtitle="Find students, staff, receipts and more" />
 
       {/* mode toggle: Name / IEMIS */}
-      <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1">
-        {MODES.map((m) => (
-          <button
-            key={m.key}
-            onClick={() => setMode(m.key)}
-            className={cn(
-              'rounded-md px-4 py-1.5 text-sm font-medium transition-colors',
-              mode === m.key ? 'bg-brand text-white' : 'text-slate-500 hover:text-slate-700'
-            )}
-          >
-            {m.label}
-          </button>
-        ))}
-      </div>
+      <SearchModeToggle value={mode} onChange={setMode} />
 
       <Input
         value={q}
         onChange={(e) => setQ(e.target.value)}
-        placeholder={activeMode.hint}
+        placeholder={HINTS[mode]}
         className="text-lg"
         inputMode={mode === 'iemis' ? 'numeric' : 'text'}
       />
@@ -84,7 +69,7 @@ export default function GlobalSearch() {
       ) : loading ? (
         <Loading />
       ) : results.length === 0 ? (
-        <EmptyState title="No results" description={`Nothing matched “${q}” by ${activeMode.label}.`} />
+        <EmptyState title="No results" description={`Nothing matched “${q}” by ${mode === 'iemis' ? 'IEMIS' : 'Name'}.`} />
       ) : (
         <div className="space-y-3">
           {results.map((r: any) => (

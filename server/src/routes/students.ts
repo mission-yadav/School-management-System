@@ -26,14 +26,16 @@ function pickProfile(body: any) {
 router.get(
   '/',
   asyncHandler(async (req, res) => {
-    const { classId, status, q } = req.query as Record<string, string>;
+    const { classId, status, q, by } = req.query as Record<string, string>;
     const where: any = {};
     if (classId) where.classId = Number(classId);
     if (status) where.status = status;
-    if (q) where.OR = [
-      { name: { contains: q, mode: 'insensitive' } },
-      { admissionNo: { contains: q, mode: 'insensitive' } },
-    ];
+    if (q) {
+      const ci = { contains: q, mode: 'insensitive' as const };
+      where.OR = by === 'iemis'
+        ? [{ iemis: ci }]
+        : [{ name: ci }, { admissionNo: ci }, { iemis: ci }];
+    }
     const students = await prisma.student.findMany({
       where,
       orderBy: [{ classId: 'asc' }, { rollNo: 'asc' }, { name: 'asc' }],

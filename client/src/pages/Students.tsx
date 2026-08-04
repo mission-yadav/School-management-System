@@ -10,17 +10,19 @@ import { DataTable, type Column } from '@/components/ui/table';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { useToast } from '@/components/ui/toast';
 import { Link } from 'react-router-dom';
+import { SearchModeToggle, searchPlaceholder, type SearchMode } from '@/components/SearchModeToggle';
 
 export default function Students() {
   const toast = useToast();
   const [classId, setClassId] = useState('');
   const [q, setQ] = useState('');
+  const [searchBy, setSearchBy] = useState<SearchMode>('name');
   const params = new URLSearchParams();
   if (classId) params.set('classId', classId);
-  if (q) params.set('q', q);
+  if (q) { params.set('q', q); params.set('by', searchBy); }
   const qs = params.toString();
   const url = `/students${qs ? `?${qs}` : ''}`;
-  const { data, loading, refetch } = useFetch<any[]>(url, [classId, q]);
+  const { data, loading, refetch } = useFetch<any[]>(url, [classId, q, searchBy]);
   const { data: classes } = useFetch<any[]>('/classes');
 
   const [open, setOpen] = useState(false);
@@ -84,7 +86,8 @@ export default function Students() {
         <option value="">All Classes</option>
         {(classes || []).map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
       </Select>
-      <Input placeholder="Search students…" value={q} onChange={(e) => setQ(e.target.value)} className="w-64" />
+      <SearchModeToggle value={searchBy} onChange={setSearchBy} />
+      <Input placeholder={searchPlaceholder(searchBy)} value={q} onChange={(e) => setQ(e.target.value)} className="w-64" inputMode={searchBy === 'iemis' ? 'numeric' : 'text'} />
     </div>
     {loading ? <Loading /> : <DataTable columns={columns} rows={data || []} />}
 
