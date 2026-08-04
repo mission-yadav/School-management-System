@@ -66,7 +66,7 @@ export default function Certificates() {
   const columns: Column<any>[] = [
     { header: 'Serial No', accessor: (r) => r.serialNo },
     { header: 'Student', accessor: (r) => r.studentName },
-    { header: 'Adm.No', accessor: (r) => r.admissionNo },
+    { header: 'IEMIS ID', accessor: (r) => r.iemis || '—' },
     { header: 'Type', accessor: (r) => <Badge variant={statusVariant(r.type)}>{typeLabel(r.type)}</Badge> },
     { header: 'Issued', accessor: (r) => new Date(r.issuedAt).toLocaleDateString() },
     {
@@ -103,7 +103,7 @@ export default function Certificates() {
                 <option value="">Select student</option>
                 {(students.data || []).map((s) => (
                   <option key={s.id} value={s.id}>
-                    {s.name} ({s.admissionNo})
+                    {s.name} (IEMIS {s.iemis || '—'})
                   </option>
                 ))}
               </Select>

@@ -62,7 +62,7 @@ export default function Students() {
   const columns: Column<any>[] = [
     { key: 'rollNo', header: 'Roll', render: (r) => r.rollNo || '—' },
     { key: 'name', header: 'Name', render: (r) => <Link className="text-blue-600 hover:underline" to={`/students/${r.id}`}>{r.name}</Link> },
-    { key: 'admissionNo', header: 'Adm.No', render: (r) => r.admissionNo || '—' },
+    { key: 'iemis', header: 'IEMIS ID', render: (r) => r.iemis || '—' },
     { key: 'class', header: 'Class', render: (r) => [r.className, r.sectionName].filter(Boolean).join(' ') || '—' },
     { key: 'gender', header: 'Gender', render: (r) => r.gender || '—' },
     { key: 'status', header: 'Status', render: (r) => <Badge variant={statusVariant(r.status)}>{r.status}</Badge> },
@@ -92,7 +92,6 @@ export default function Students() {
       <DialogContent title="Admit Student" footer={<><Button variant="secondary" onClick={() => setOpen(false)}>Cancel</Button><Button onClick={save}>Save</Button></>}>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Name"><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
-          <Field label="Admission No"><Input value={form.admissionNo} onChange={(e) => setForm({ ...form, admissionNo: e.target.value })} /></Field>
           <Field label="IEMIS ID"><Input value={form.iemis} onChange={(e) => setForm({ ...form, iemis: e.target.value })} /></Field>
           <Field label="Class">
             <Select value={form.classId} onChange={(e) => setForm({ ...form, classId: e.target.value, sectionId: '' })}>

@@ -35,8 +35,8 @@ router.get('/', asyncHandler(async (req, res) => {
 
   // ---- Name mode: broad search ----
   const tasks: Array<Promise<any[]>> = [
-    prisma.student.findMany({ where: { OR: [{ name: ci }, { admissionNo: ci }] }, take: 5, include: { class: { select: { name: true } } } })
-      .then((rows) => rows.map((s) => ({ type: 'student', id: s.id, label: s.name, sublabel: `${s.admissionNo}${s.class ? ` · ${s.class.name}` : ''}` }))),
+    prisma.student.findMany({ where: { OR: [{ name: ci }, { admissionNo: ci }, { iemis: ci }] }, take: 5, include: { class: { select: { name: true } } } })
+      .then((rows) => rows.map((s) => ({ type: 'student', id: s.id, label: s.name, sublabel: `IEMIS ${s.iemis || '—'}${s.class ? ` · ${s.class.name}` : ''}` }))),
     prisma.user.findMany({ where: { OR: [{ name: ci }, { email: ci }] }, take: 5 })
       .then((rows) => rows.map((u) => ({ type: 'teacher', id: u.id, label: u.name, sublabel: u.email }))),
     prisma.parent.findMany({ where: { OR: [{ name: ci }, { phone: ci }] }, take: 5 })

@@ -16,11 +16,11 @@ router.get('/', asyncHandler(async (req, res) => {
   if (type) where.type = type;
   const certs = await prisma.certificate.findMany({
     where, orderBy: { issuedAt: 'desc' },
-    include: { student: { select: { name: true, admissionNo: true } }, issuedBy: { select: { name: true } } },
+    include: { student: { select: { name: true, admissionNo: true, iemis: true } }, issuedBy: { select: { name: true } } },
   });
   res.json(certs.map((c) => ({
     id: c.id, serialNo: c.serialNo, type: c.type, issuedAt: c.issuedAt,
-    studentId: c.studentId, studentName: c.student.name, admissionNo: c.student.admissionNo,
+    studentId: c.studentId, studentName: c.student.name, admissionNo: c.student.admissionNo, iemis: c.student.iemis,
     issuedBy: c.issuedBy?.name || null,
   })));
 }));

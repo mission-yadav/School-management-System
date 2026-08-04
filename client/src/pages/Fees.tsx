@@ -154,7 +154,7 @@ export default function Fees() {
           <Field label="Student">
             <Select value={form.studentId} onChange={(e) => setForm({ ...form, studentId: e.target.value })}>
               <option value="">Select student</option>
-              {(students || []).map((s: any) => <option key={s.id} value={s.id}>{s.name} ({s.admissionNo}) — {s.className}</option>)}
+              {(students || []).map((s: any) => <option key={s.id} value={s.id}>{s.name} (IEMIS {s.iemis || '—'}) — {s.className}</option>)}
             </Select>
           </Field>
           <Field label="Title"><Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></Field>

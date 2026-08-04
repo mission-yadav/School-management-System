@@ -56,7 +56,7 @@ export default function StudentProfile() {
             <Badge variant={statusVariant(s.status)}>{s.status}</Badge>
           </div>
           <div className="text-sm text-gray-500">
-            {s.admissionNo && <>Adm. No: {s.admissionNo}</>}
+            IEMIS ID: {s.iemis || '—'}
             {className && <> · {className}</>}
           </div>
         </div>
@@ -76,6 +76,7 @@ export default function StudentProfile() {
             <div>
               <div className="mb-2 text-sm font-medium text-gray-500">Personal</div>
               <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
+                <Row label="IEMIS ID" value={s.iemis} />
                 <Row label="Roll No" value={s.rollNo} />
                 <Row label="Gender" value={s.gender} />
                 <Row label="Date of Birth" value={s.dob ? formatDate(s.dob) : '—'} />

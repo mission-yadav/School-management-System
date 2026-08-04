@@ -54,7 +54,7 @@ router.get('/certificate/:id', asyncHandler(async (req, res) => {
 
     doc.moveDown(2);
     const details: [string, string][] = [
-      ['Name', s.name], ['Admission No', s.admissionNo], ['Roll No', s.rollNo || '—'],
+      ['Name', s.name], ['IEMIS ID', s.iemis || '—'], ['Roll No', s.rollNo || '—'],
       ['Class', cls], ['Date of Birth', s.dob ? dayjs(s.dob).format('DD MMM YYYY') : '—'],
       ['Gender', s.gender || '—'],
     ];
@@ -76,7 +76,7 @@ function renderIdCard(res: any, school: SchoolInfo, s: any, cls: string, serial:
     doc.fillColor('white').fontSize(14).font('Helvetica-Bold').text(school.name, x + 12, y + 14, { width: w - 24 });
     doc.fillColor('black').font('Helvetica').fontSize(11);
     const rows: [string, string][] = [
-      ['Name', s.name], ['Adm. No', s.admissionNo], ['Class', cls],
+      ['Name', s.name], ['IEMIS ID', s.iemis || '—'], ['Class', cls],
       ['Roll No', s.rollNo || '—'], ['Blood Group', s.bloodGroup || '—'],
       ['Contact', s.phone || s.emergencyContact || '—'],
     ];
@@ -112,7 +112,7 @@ router.get('/receipt/:paymentId', asyncHandler(async (req, res) => {
 
     let dy = y + 30;
     const info: [string, string][] = [
-      ['Student', inv.student.name], ['Admission No', inv.student.admissionNo],
+      ['Student', inv.student.name], ['IEMIS ID', inv.student.iemis || '—'],
       ['Class', inv.student.class?.name || '—'], ['Invoice', inv.title],
     ];
     for (const [k, v] of info) { doc.font('Helvetica-Bold').text(`${k}: `, 50, dy, { continued: true }).font('Helvetica').text(v); dy += 20; }
@@ -156,12 +156,12 @@ router.get('/report-card', asyncHandler(async (req, res) => {
   const max = results.reduce((a, r) => a + r.maxMarks, 0);
   const percent = max ? (total / max) * 100 : 0;
 
-  streamPdf(res, `report-${student.admissionNo}.pdf`, (doc) => {
+  streamPdf(res, `report-${student.iemis || student.admissionNo}.pdf`, (doc) => {
     let y = letterhead(doc, school);
     y = heading(doc, `Report Card — ${exam.name}`, y);
     let dy = y + 10;
     doc.fontSize(11);
-    [['Name', student.name], ['Admission No', student.admissionNo], ['Class', student.class?.name || '—']].forEach(([k, v]) => {
+    [['Name', student.name], ['IEMIS ID', student.iemis || '—'], ['Class', student.class?.name || '—']].forEach(([k, v]) => {
       doc.font('Helvetica-Bold').text(`${k}: `, 50, dy, { continued: true }).font('Helvetica').text(v as string); dy += 18;
     });
     dy += 10;

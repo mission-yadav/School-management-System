@@ -38,7 +38,7 @@ router.get('/students', asyncHandler(async (req, res) => {
     orderBy: { name: 'asc' },
   });
   const rows = students.map((s) => ({
-    admissionNo: s.admissionNo,
+    iemis: s.iemis,
     name: s.name,
     gender: s.gender,
     phone: s.phone,
