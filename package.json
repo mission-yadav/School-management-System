@@ -1,0 +1,18 @@
+{
+  "name": "sms",
+  "version": "1.0.0",
+  "description": "EduManage — School Management System (React+TS+shadcn / Express+TS / Prisma / PostgreSQL)",
+  "private": true,
+  "scripts": {
+    "install:all": "npm install && npm --prefix server install && npm --prefix client install",
+    "db:setup": "npm --prefix server run prisma:generate && npm --prefix server run prisma:push && npm --prefix server run seed",
+    "dev": "concurrently -n server,client -c magenta,cyan \"npm --prefix server run dev\" \"npm --prefix client run dev\"",
+    "server": "npm --prefix server run dev",
+    "client": "npm --prefix client run dev",
+    "seed": "npm --prefix server run seed",
+    "typecheck": "npm --prefix server run typecheck && npm --prefix client run build"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.4"
+  }
+}

@@ -1,0 +1,184 @@
+import { Router } from 'express';
+import prisma from '../prisma.js';
+import { authRequired } from '../middleware/auth.js';
+import { asyncHandler, AppError, intParam } from '../lib/http.js';
+import { streamPdf, letterhead, heading, signatureBlock, BRAND, type SchoolInfo } from '../lib/pdf.js';
+import dayjs from 'dayjs';
+
+const router = Router();
+router.use(authRequired);
+
+async function getSchool(): Promise<SchoolInfo> {
+  const rows = await prisma.setting.findMany({ where: { key: { in: ['schoolName', 'address', 'phone', 'email'] } } });
+  const map = Object.fromEntries(rows.map((r) => [r.key, r.value as any]));
+  return {
+    name: (map.schoolName as string) || 'EduManage Public School',
+    address: (map.address as string) || '123 School Road, Bengaluru',
+    phone: (map.phone as string) || '+91 80 1234 5678',
+    email: (map.email as string) || 'info@school.com',
+  };
+}
+
+const BODY: Record<string, (name: string, cls: string) => string> = {
+  BONAFIDE: (n, c) => `This is to certify that ${n} is a bonafide student of this institution, currently studying in ${c}. This certificate is issued on the student's request for official purposes.`,
+  CHARACTER: (n, c) => `This is to certify that ${n}, a student of ${c}, has been of good moral character and conduct during their time at this institution. We wish them success in all future endeavours.`,
+  TRANSFER: (n, c) => `This is to certify that ${n} was a bonafide student of ${c} at this institution. All dues have been cleared and the student is hereby permitted to seek admission elsewhere. Their conduct was found to be satisfactory.`,
+  STUDY: (n, c) => `This is to certify that ${n} has been studying in ${c} at this institution and is a regular student. This study certificate is issued for the purpose stated by the applicant.`,
+};
+
+/** GET /api/pdf/certificate/:id — render an issued certificate to PDF */
+router.get('/certificate/:id', asyncHandler(async (req, res) => {
+  const id = intParam(req.params.id);
+  const cert = await prisma.certificate.findUnique({
+    where: { id },
+    include: { student: { include: { class: { select: { name: true } } } } },
+  });
+  if (!cert) throw new AppError(404, 'Certificate not found');
+  const school = await getSchool();
+  const s = cert.student;
+  const cls = s.class?.name || '—';
+
+  if (cert.type === 'ID_CARD') return renderIdCard(res, school, s, cls, cert.serialNo);
+  if (cert.type === 'FEE_RECEIPT') throw new AppError(400, 'Use /api/pdf/receipt/:paymentId for receipts');
+
+  const title = `${cert.type.replace('_', ' ')} Certificate`;
+  streamPdf(res, `${cert.serialNo}.pdf`, (doc) => {
+    let y = letterhead(doc, school);
+    y = heading(doc, title, y);
+    doc.fontSize(10).fillColor('#555').text(`Serial No: ${cert.serialNo}`, 50, y, { align: 'right' });
+    doc.text(`Date: ${dayjs(cert.issuedAt).format('DD MMM YYYY')}`, 50, y + 14, { align: 'right' });
+    doc.fillColor('black').fontSize(12).text(' ', 50, y + 40);
+    doc.moveDown(2);
+    const text = (BODY[cert.type] || BODY.BONAFIDE)(s.name, cls);
+    doc.fontSize(12).text(text, 50, y + 60, { align: 'justify', lineGap: 8, width: doc.page.width - 100 });
+
+    doc.moveDown(2);
+    const details: [string, string][] = [
+      ['Name', s.name], ['Admission No', s.admissionNo], ['Roll No', s.rollNo || '—'],
+      ['Class', cls], ['Date of Birth', s.dob ? dayjs(s.dob).format('DD MMM YYYY') : '—'],
+      ['Gender', s.gender || '—'],
+    ];
+    let dy = doc.y + 20;
+    for (const [k, v] of details) {
+      doc.font('Helvetica-Bold').text(`${k}: `, 60, dy, { continued: true }).font('Helvetica').text(v);
+      dy += 20;
+    }
+    signatureBlock(doc);
+  });
+}));
+
+function renderIdCard(res: any, school: SchoolInfo, s: any, cls: string, serial: string) {
+  streamPdf(res, `${serial}.pdf`, (doc) => {
+    // card 320x200 centered
+    const x = 60, y = 80, w = 360, h = 220;
+    doc.roundedRect(x, y, w, h, 10).lineWidth(2).stroke(BRAND);
+    doc.rect(x, y, w, 46).fill(BRAND);
+    doc.fillColor('white').fontSize(14).font('Helvetica-Bold').text(school.name, x + 12, y + 14, { width: w - 24 });
+    doc.fillColor('black').font('Helvetica').fontSize(11);
+    const rows: [string, string][] = [
+      ['Name', s.name], ['Adm. No', s.admissionNo], ['Class', cls],
+      ['Roll No', s.rollNo || '—'], ['Blood Group', s.bloodGroup || '—'],
+      ['Contact', s.phone || s.emergencyContact || '—'],
+    ];
+    let ry = y + 60;
+    for (const [k, v] of rows) {
+      doc.font('Helvetica-Bold').text(`${k}: `, x + 16, ry, { continued: true }).font('Helvetica').text(v);
+      ry += 22;
+    }
+    doc.fontSize(8).fillColor('#888').text(`ID: ${serial}`, x + 16, y + h - 20);
+  });
+}
+
+/** GET /api/pdf/receipt/:paymentId — fee payment receipt */
+router.get('/receipt/:paymentId', asyncHandler(async (req, res) => {
+  const paymentId = intParam(req.params.paymentId, 'paymentId');
+  const payment = await prisma.payment.findUnique({
+    where: { id: paymentId },
+    include: { invoice: { include: { items: true, payments: true, student: { include: { class: { select: { name: true } } } } } } },
+  });
+  if (!payment) throw new AppError(404, 'Payment not found');
+  const school = await getSchool();
+  const inv = payment.invoice;
+  const total = inv.items.reduce((a, i) => a + i.amount, 0) + inv.fine - inv.discount;
+  const paidToDate = inv.payments.reduce((a, p) => a + p.amount, 0);
+
+  streamPdf(res, `${payment.receiptNo}.pdf`, (doc) => {
+    let y = letterhead(doc, school);
+    y = heading(doc, 'Fee Receipt', y);
+    doc.fontSize(10).fillColor('#555')
+      .text(`Receipt No: ${payment.receiptNo}`, 50, y)
+      .text(`Date: ${dayjs(payment.paidAt).format('DD MMM YYYY, hh:mm A')}`, 50, y, { align: 'right' });
+    doc.fillColor('black').fontSize(12);
+
+    let dy = y + 30;
+    const info: [string, string][] = [
+      ['Student', inv.student.name], ['Admission No', inv.student.admissionNo],
+      ['Class', inv.student.class?.name || '—'], ['Invoice', inv.title],
+    ];
+    for (const [k, v] of info) { doc.font('Helvetica-Bold').text(`${k}: `, 50, dy, { continued: true }).font('Helvetica').text(v); dy += 20; }
+
+    dy += 10;
+    doc.rect(50, dy, doc.page.width - 100, 24).fill('#f0f0f7');
+    doc.fillColor(BRAND).font('Helvetica-Bold').fontSize(11)
+      .text('Description', 60, dy + 6).text('Amount (Rs.)', 50, dy + 6, { align: 'right' });
+    doc.fillColor('black').font('Helvetica');
+    dy += 30;
+    for (const it of inv.items) {
+      doc.text(it.description, 60, dy).text(it.amount.toLocaleString('en-IN'), 50, dy, { align: 'right' });
+      dy += 20;
+    }
+    if (inv.discount) { doc.text('Discount', 60, dy).text(`- ${inv.discount.toLocaleString('en-IN')}`, 50, dy, { align: 'right' }); dy += 20; }
+    if (inv.fine) { doc.text('Fine', 60, dy).text(inv.fine.toLocaleString('en-IN'), 50, dy, { align: 'right' }); dy += 20; }
+
+    dy += 6;
+    doc.moveTo(50, dy).lineTo(doc.page.width - 50, dy).stroke('#ccc');
+    dy += 10;
+    doc.font('Helvetica-Bold');
+    doc.text('Invoice Total', 60, dy).text(total.toLocaleString('en-IN'), 50, dy, { align: 'right' }); dy += 20;
+    doc.fillColor('green').text('Amount Paid Now', 60, dy).text(payment.amount.toLocaleString('en-IN'), 50, dy, { align: 'right' }); dy += 20;
+    doc.fillColor('black').text('Paid To Date', 60, dy).text(paidToDate.toLocaleString('en-IN'), 50, dy, { align: 'right' }); dy += 20;
+    doc.fillColor(total - paidToDate > 0 ? 'red' : 'green').text('Balance Due', 60, dy).text((total - paidToDate).toLocaleString('en-IN'), 50, dy, { align: 'right' });
+    doc.fillColor('black').font('Helvetica').fontSize(9).text(`Payment mode: ${payment.method}`, 60, dy + 30);
+    signatureBlock(doc);
+  });
+}));
+
+/** GET /api/pdf/report-card?examId=&studentId= */
+router.get('/report-card', asyncHandler(async (req, res) => {
+  const examId = Number(req.query.examId), studentId = Number(req.query.studentId);
+  if (!examId || !studentId) throw new AppError(400, 'examId and studentId required');
+  const school = await getSchool();
+  const student = await prisma.student.findUnique({ where: { id: studentId }, include: { class: { select: { name: true } } } });
+  const exam = await prisma.exam.findUnique({ where: { id: examId } });
+  if (!student || !exam) throw new AppError(404, 'Not found');
+  const results = await prisma.result.findMany({ where: { examId, studentId }, include: { subject: { select: { name: true } } } });
+  const total = results.reduce((a, r) => a + r.marks, 0);
+  const max = results.reduce((a, r) => a + r.maxMarks, 0);
+  const percent = max ? (total / max) * 100 : 0;
+
+  streamPdf(res, `report-${student.admissionNo}.pdf`, (doc) => {
+    let y = letterhead(doc, school);
+    y = heading(doc, `Report Card — ${exam.name}`, y);
+    let dy = y + 10;
+    doc.fontSize(11);
+    [['Name', student.name], ['Admission No', student.admissionNo], ['Class', student.class?.name || '—']].forEach(([k, v]) => {
+      doc.font('Helvetica-Bold').text(`${k}: `, 50, dy, { continued: true }).font('Helvetica').text(v as string); dy += 18;
+    });
+    dy += 10;
+    doc.rect(50, dy, doc.page.width - 100, 24).fill('#f0f0f7');
+    doc.fillColor(BRAND).font('Helvetica-Bold')
+      .text('Subject', 60, dy + 6).text('Marks', 300, dy + 6).text('Max', 380, dy + 6).text('%', 460, dy + 6);
+    doc.fillColor('black').font('Helvetica'); dy += 30;
+    for (const r of results) {
+      const p = r.maxMarks ? Math.round((r.marks / r.maxMarks) * 100) : 0;
+      doc.text(r.subject.name, 60, dy).text(String(r.marks), 300, dy).text(String(r.maxMarks), 380, dy).text(`${p}%`, 460, dy);
+      dy += 20;
+    }
+    dy += 10;
+    doc.font('Helvetica-Bold').text(`Total: ${total} / ${max}   (${Math.round(percent * 100) / 100}%)`, 60, dy);
+    doc.text(`Result: ${percent >= 35 ? 'PASS' : 'FAIL'}`, 60, dy + 20);
+    signatureBlock(doc);
+  });
+}));
+
+export default router;
