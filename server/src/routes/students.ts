@@ -7,7 +7,7 @@ const router = Router();
 router.use(authRequired);
 
 const PROFILE_FIELDS = [
-  'admissionNo', 'rollNo', 'name', 'gender', 'dob', 'bloodGroup', 'address', 'phone',
+  'admissionNo', 'iemis', 'rollNo', 'name', 'gender', 'dob', 'bloodGroup', 'address', 'phone',
   'email', 'photoUrl', 'aadhaar', 'previousSchool', 'house', 'batch', 'emergencyContact',
   'allergies', 'disabilities', 'medicalHistory', 'vaccination',
 ] as const;
@@ -41,7 +41,7 @@ router.get(
     });
     res.json(
       students.map((s) => ({
-        id: s.id, admissionNo: s.admissionNo, rollNo: s.rollNo, name: s.name,
+        id: s.id, admissionNo: s.admissionNo, iemis: s.iemis, rollNo: s.rollNo, name: s.name,
         gender: s.gender, phone: s.phone, status: s.status,
         classId: s.classId, className: s.class?.name || null, sectionName: s.section?.name || null,
       }))

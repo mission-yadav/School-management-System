@@ -107,7 +107,7 @@ async function main() {
       const parent = await prisma.parent.create({ data: { name: `${pick(['Rajesh', 'Sunita', 'Mahesh', 'Lakshmi'])} ${name.split(' ')[1]}`, relation: pick(['Father', 'Mother']), phone: `98${rand(10000000, 99999999)}`, occupation: pick(['Engineer', 'Doctor', 'Business', 'Teacher']) } });
       const st = await prisma.student.create({
         data: {
-          admissionNo: `ADM${++adm}`, rollNo: String(r), name, gender: pick(['Male', 'Female']),
+          admissionNo: `ADM${++adm}`, iemis: String(70000000 + adm), rollNo: String(r), name, gender: pick(['Male', 'Female']),
           dob: new Date(2010 - classNames.indexOf(cls.name), rand(0, 11), rand(1, 28)),
           bloodGroup: pick(blood), phone: `9${rand(100000000, 999999999)}`, email: `${name.split(' ')[0].toLowerCase()}${r}@student.school`,
           aadhaar: String(rand(100000000000, 999999999999)), address: `${rand(1, 200)}, ${pick(['MG Road', 'Park Street', 'Lake View'])}, Bengaluru`,

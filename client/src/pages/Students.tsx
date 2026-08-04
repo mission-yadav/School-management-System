@@ -25,7 +25,7 @@ export default function Students() {
 
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<any>({
-    name: '', admissionNo: '', rollNo: '', gender: 'MALE', dob: '', bloodGroup: '',
+    name: '', admissionNo: '', iemis: '', rollNo: '', gender: 'MALE', dob: '', bloodGroup: '',
     phone: '', email: '', address: '', classId: '', sectionId: '',
     parentName: '', parentPhone: '', allergies: '', disabilities: '',
   });
@@ -34,7 +34,7 @@ export default function Students() {
 
   function openNew() {
     setForm({
-      name: '', admissionNo: '', rollNo: '', gender: 'MALE', dob: '', bloodGroup: '',
+      name: '', admissionNo: '', iemis: '', rollNo: '', gender: 'MALE', dob: '', bloodGroup: '',
       phone: '', email: '', address: '', classId: '', sectionId: '',
       parentName: '', parentPhone: '', allergies: '', disabilities: '',
     });
@@ -93,6 +93,7 @@ export default function Students() {
         <div className="grid grid-cols-2 gap-3">
           <Field label="Name"><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
           <Field label="Admission No"><Input value={form.admissionNo} onChange={(e) => setForm({ ...form, admissionNo: e.target.value })} /></Field>
+          <Field label="IEMIS ID"><Input value={form.iemis} onChange={(e) => setForm({ ...form, iemis: e.target.value })} /></Field>
           <Field label="Class">
             <Select value={form.classId} onChange={(e) => setForm({ ...form, classId: e.target.value, sectionId: '' })}>
               <option value="">Select class</option>

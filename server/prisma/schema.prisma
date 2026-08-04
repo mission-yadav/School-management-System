@@ -69,6 +69,7 @@ model Parent {
 model Student {
   id             Int           @id @default(autoincrement())
   admissionNo    String        @unique
+  iemis          String?       @unique   // IEMIS student ID
   rollNo         String?
   name           String
   gender         String?
