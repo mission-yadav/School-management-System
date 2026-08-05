@@ -11,6 +11,7 @@ import { Badge, statusVariant } from '@/components/ui/badge';
 import { DataTable, type Column } from '@/components/ui/table';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { useToast } from '@/components/ui/toast';
+import { SearchModeToggle, searchPlaceholder, type SearchMode } from '@/components/SearchModeToggle';
 
 type Item = { description: string; amount: string; categoryId: string };
 
@@ -22,6 +23,20 @@ export default function Fees() {
   const { data: summary } = useFetch<any>('/fees/summary', [status]);
   const { data: students } = useFetch<any[]>('/students');
   const { data: categories } = useFetch<any[]>('/fees/categories');
+  const { data: classes } = useFetch<any[]>('/classes');
+
+  // ---- student picker filters (New invoice) ----
+  const [pickClass, setPickClass] = useState('');
+  const [stuBy, setStuBy] = useState<SearchMode>('name');
+  const [stuSearch, setStuSearch] = useState('');
+  const filteredStudents = (students || []).filter((s: any) => {
+    if (pickClass && String(s.classId) !== String(pickClass)) return false;
+    const term = stuSearch.trim().toLowerCase();
+    if (!term) return true;
+    return stuBy === 'iemis'
+      ? String(s.iemis || '').toLowerCase().includes(term)
+      : String(s.name || '').toLowerCase().includes(term);
+  });
 
   // ---- New invoice dialog ----
   const emptyItem = (): Item => ({ description: '', amount: '', categoryId: '' });
@@ -32,6 +47,7 @@ export default function Fees() {
   function startNew() {
     setForm({ studentId: '', title: '', sessionLabel: '', dueDate: '', discount: '', fine: '' });
     setItems([emptyItem()]);
+    setPickClass(''); setStuBy('name'); setStuSearch('');
     setOpenNew(true);
   }
   function updateItem(i: number, patch: Partial<Item>) {
@@ -150,13 +166,30 @@ export default function Fees() {
     {/* New invoice */}
     <Dialog open={openNew} onOpenChange={setOpenNew}>
       <DialogContent title="New Invoice" footer={<><Button variant="secondary" onClick={() => setOpenNew(false)}>Cancel</Button><Button onClick={createInvoice}>Create</Button></>}>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Student">
-            <Select value={form.studentId} onChange={(e) => setForm({ ...form, studentId: e.target.value })}>
-              <option value="">Select student</option>
-              {(students || []).map((s: any) => <option key={s.id} value={s.id}>{s.name} (IEMIS {s.iemis || '—'}) — {s.className}</option>)}
+        {/* Student picker: filter by class + search by name/IEMIS */}
+        <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50/60 p-3">
+          <div className="mb-2 text-sm font-medium text-slate-600">Select Student</div>
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <Select value={pickClass} onChange={(e) => setPickClass(e.target.value)} className="w-40">
+              <option value="">All classes</option>
+              {(classes || []).map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </Select>
-          </Field>
+            <SearchModeToggle value={stuBy} onChange={setStuBy} />
+            <Input
+              className="min-w-[10rem] flex-1"
+              placeholder={searchPlaceholder(stuBy)}
+              value={stuSearch}
+              onChange={(e) => setStuSearch(e.target.value)}
+              inputMode={stuBy === 'iemis' ? 'numeric' : 'text'}
+            />
+          </div>
+          <Select value={form.studentId} onChange={(e) => setForm({ ...form, studentId: e.target.value })}>
+            <option value="">{`Select student (${filteredStudents.length})`}</option>
+            {filteredStudents.map((s: any) => <option key={s.id} value={s.id}>{s.name} · IEMIS {s.iemis || '—'} · {s.className || '—'}</option>)}
+          </Select>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
           <Field label="Title"><Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></Field>
           <Field label="Session"><Input value={form.sessionLabel} onChange={(e) => setForm({ ...form, sessionLabel: e.target.value })} /></Field>
           <Field label="Due Date"><Input type="date" value={form.dueDate} onChange={(e) => setForm({ ...form, dueDate: e.target.value })} /></Field>
