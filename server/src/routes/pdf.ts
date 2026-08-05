@@ -127,7 +127,7 @@ router.get('/receipt/:paymentId', asyncHandler(async (req, res) => {
       doc.text(it.description, 60, dy).text(it.amount.toLocaleString('en-IN'), 50, dy, { align: 'right' });
       dy += 20;
     }
-    if (inv.discount) { doc.text('Discount', 60, dy).text(`- ${inv.discount.toLocaleString('en-IN')}`, 50, dy, { align: 'right' }); dy += 20; }
+    if (inv.discount) { doc.text('Less', 60, dy).text(`- ${inv.discount.toLocaleString('en-IN')}`, 50, dy, { align: 'right' }); dy += 20; }
     if (inv.fine) { doc.text('Fine', 60, dy).text(inv.fine.toLocaleString('en-IN'), 50, dy, { align: 'right' }); dy += 20; }
 
     dy += 6;
@@ -139,6 +139,62 @@ router.get('/receipt/:paymentId', asyncHandler(async (req, res) => {
     doc.fillColor('black').text('Paid To Date', 60, dy).text(paidToDate.toLocaleString('en-IN'), 50, dy, { align: 'right' }); dy += 20;
     doc.fillColor(total - paidToDate > 0 ? 'red' : 'green').text('Balance Due', 60, dy).text((total - paidToDate).toLocaleString('en-IN'), 50, dy, { align: 'right' });
     doc.fillColor('black').font('Helvetica').fontSize(9).text(`Payment mode: ${payment.method}`, 60, dy + 30);
+    signatureBlock(doc);
+  });
+}));
+
+/** GET /api/pdf/bill/:invoiceId — printable itemised fee bill (with Less) */
+router.get('/bill/:invoiceId', asyncHandler(async (req, res) => {
+  const invoiceId = intParam(req.params.invoiceId, 'invoiceId');
+  const inv = await prisma.feeInvoice.findUnique({
+    where: { id: invoiceId },
+    include: { items: true, payments: true, student: { include: { class: { select: { name: true } } } } },
+  });
+  if (!inv) throw new AppError(404, 'Invoice not found');
+  const school = await getSchool();
+  const gross = inv.items.reduce((a, i) => a + i.amount, 0);
+  const total = gross + inv.fine - inv.discount;
+  const paid = inv.payments.reduce((a, p) => a + p.amount, 0);
+
+  streamPdf(res, `bill-${inv.student.iemis || inv.student.admissionNo}.pdf`, (doc) => {
+    let y = letterhead(doc, school);
+    y = heading(doc, 'Fee Bill', y);
+    doc.fontSize(10).fillColor('#555')
+      .text(`Bill No: SMS-${String(inv.id).padStart(5, '0')}`, 50, y)
+      .text(`Date: ${dayjs(inv.createdAt).format('DD MMM YYYY')}`, 50, y, { align: 'right' });
+    doc.fillColor('black').fontSize(12);
+
+    let dy = y + 30;
+    const info: [string, string][] = [
+      ['Student', inv.student.name], ['IEMIS ID', inv.student.iemis || '—'],
+      ['Class', inv.student.class?.name || '—'], ['Bill For', inv.title],
+      ...(inv.dueDate ? [['Due Date', dayjs(inv.dueDate).format('DD MMM YYYY')] as [string, string]] : []),
+    ];
+    for (const [k, v] of info) { doc.font('Helvetica-Bold').text(`${k}: `, 50, dy, { continued: true }).font('Helvetica').text(v); dy += 20; }
+
+    dy += 10;
+    doc.rect(50, dy, doc.page.width - 100, 24).fill('#f0f0f7');
+    doc.fillColor(BRAND).font('Helvetica-Bold').fontSize(11)
+      .text('Particulars', 60, dy + 6).text('Amount (Rs.)', 50, dy + 6, { align: 'right' });
+    doc.fillColor('black').font('Helvetica');
+    dy += 30;
+    for (const it of inv.items) {
+      doc.text(it.description, 60, dy).text(it.amount.toLocaleString('en-IN'), 50, dy, { align: 'right' });
+      dy += 20;
+    }
+    doc.moveTo(50, dy).lineTo(doc.page.width - 50, dy).stroke('#ccc'); dy += 8;
+    doc.text('Sub Total', 60, dy).text(gross.toLocaleString('en-IN'), 50, dy, { align: 'right' }); dy += 18;
+    if (inv.fine) { doc.text('Fine', 60, dy).text(inv.fine.toLocaleString('en-IN'), 50, dy, { align: 'right' }); dy += 18; }
+    if (inv.discount) { doc.fillColor('#b91c1c').text('Less', 60, dy).text(`- ${inv.discount.toLocaleString('en-IN')}`, 50, dy, { align: 'right' }); doc.fillColor('black'); dy += 18; }
+    dy += 4;
+    doc.rect(50, dy, doc.page.width - 100, 26).fill('#eeedf8');
+    doc.fillColor(BRAND).font('Helvetica-Bold').fontSize(12)
+      .text('Grand Total', 60, dy + 7).text(total.toLocaleString('en-IN'), 50, dy + 7, { align: 'right' });
+    doc.fillColor('black').font('Helvetica').fontSize(11); dy += 40;
+    doc.fillColor('green').text('Paid', 60, dy).text(paid.toLocaleString('en-IN'), 50, dy, { align: 'right' }); dy += 18;
+    doc.fillColor(total - paid > 0 ? 'red' : 'green').font('Helvetica-Bold')
+      .text('Balance Due', 60, dy).text((total - paid).toLocaleString('en-IN'), 50, dy, { align: 'right' });
+    doc.fillColor('black').font('Helvetica');
     signatureBlock(doc);
   });
 }));

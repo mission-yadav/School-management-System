@@ -19,6 +19,9 @@ function pickProfile(body: any) {
   if (body.classId !== undefined) data.classId = body.classId || null;
   if (body.sectionId !== undefined) data.sectionId = body.sectionId || null;
   if (body.status !== undefined) data.status = body.status;
+  if (body.usesTransport !== undefined) data.usesTransport = !!body.usesTransport;
+  if (body.transportFee !== undefined)
+    data.transportFee = body.transportFee === '' || body.transportFee == null ? null : Number(body.transportFee);
   return data;
 }
 

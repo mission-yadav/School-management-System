@@ -89,6 +89,8 @@ model Student {
   disabilities   String?
   medicalHistory String?
   vaccination    String?
+  usesTransport  Boolean       @default(false)  // transportation service taken?
+  transportFee   Float?        // per-student transport charge override (else class default)
   status         StudentStatus @default(ACTIVE)
   admissionDate  DateTime      @default(now())
   createdAt      DateTime      @default(now())
@@ -128,12 +130,27 @@ model Class {
   classTeacherId Int?
   createdAt      DateTime  @default(now())
 
-  sections  Section[]
-  subjects  Subject[]
-  students  Student[]
-  timetable TimetableSlot[]
-  exams     ExamClass[]
-  notices   Notice[]
+  sections     Section[]
+  subjects     Subject[]
+  students     Student[]
+  timetable    TimetableSlot[]
+  exams        ExamClass[]
+  notices      Notice[]
+  feeStructure FeeStructure?
+}
+
+// Per-class fee structure — the standard charges billed to each student in the class.
+model FeeStructure {
+  id             Int      @id @default(autoincrement())
+  class          Class    @relation(fields: [classId], references: [id], onDelete: Cascade)
+  classId        Int      @unique
+  annualCharge   Float    @default(0)
+  monthlyTuition Float    @default(0)
+  computerFee    Float    @default(0)
+  examFee        Float    @default(0)
+  transportFee   Float    @default(0)   // default transport charge for the class
+  miscCharge     Float    @default(0)
+  updatedAt      DateTime @updatedAt
 }
 
 model Section {

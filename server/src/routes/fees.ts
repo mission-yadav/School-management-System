@@ -64,6 +64,96 @@ router.get('/summary', requireRole('ADMIN'), asyncHandler(async (_req, res) => {
   res.json({ billed, collected, due: billed - collected, invoiceCount: invoices.length });
 }));
 
+/* -------------------------------------------------- fee structure (per class) */
+function emptyStructure(classId: number) {
+  return { classId, annualCharge: 0, monthlyTuition: 0, computerFee: 0, examFee: 0, transportFee: 0, miscCharge: 0 };
+}
+
+/** GET /api/fees/structure — every class with its fee structure */
+router.get('/structure', requireRole('ADMIN'), asyncHandler(async (_req, res) => {
+  const classes = await prisma.class.findMany({ orderBy: { name: 'asc' }, include: { feeStructure: true } });
+  res.json(classes.map((c) => {
+    const s = c.feeStructure;
+    return {
+      classId: c.id, className: c.name,
+      annualCharge: s?.annualCharge ?? 0, monthlyTuition: s?.monthlyTuition ?? 0,
+      computerFee: s?.computerFee ?? 0, examFee: s?.examFee ?? 0,
+      transportFee: s?.transportFee ?? 0, miscCharge: s?.miscCharge ?? 0,
+    };
+  }));
+}));
+
+/** PUT /api/fees/structure/:classId — upsert a class fee structure */
+router.put('/structure/:classId', requireRole('ADMIN'), asyncHandler(async (req, res) => {
+  const classId = intParam(req.params.classId, 'classId');
+  const b = req.body || {};
+  const num = (v: any) => Number(v || 0);
+  const data = {
+    annualCharge: num(b.annualCharge), monthlyTuition: num(b.monthlyTuition),
+    computerFee: num(b.computerFee), examFee: num(b.examFee),
+    transportFee: num(b.transportFee), miscCharge: num(b.miscCharge),
+  };
+  const row = await prisma.feeStructure.upsert({ where: { classId }, update: data, create: { classId, ...data } });
+  res.json(row);
+}));
+
+/** GET /api/fees/prefill?studentId= — suggested bill lines from the student's class structure */
+router.get('/prefill', requireRole('ADMIN'), asyncHandler(async (req, res) => {
+  const studentId = intParam(req.query.studentId, 'studentId');
+  const student = await prisma.student.findUnique({
+    where: { id: studentId },
+    include: { class: { include: { feeStructure: true } } },
+  });
+  if (!student) throw new AppError(404, 'Student not found');
+  const s = student.class?.feeStructure || emptyStructure(student.classId || 0);
+  const transportAmt = student.transportFee ?? s.transportFee ?? 0;
+  const lines = [
+    { key: 'annualCharge', label: 'Annual Charge', amount: s.annualCharge, include: true },
+    { key: 'monthlyTuition', label: 'Monthly Tuition Fee', amount: s.monthlyTuition, include: true },
+    { key: 'computerFee', label: 'Computer Fee', amount: s.computerFee, include: true },
+    { key: 'miscCharge', label: 'Miscellaneous Charges', amount: s.miscCharge, include: true },
+    { key: 'transportFee', label: 'Transportation Charge', amount: transportAmt, include: !!student.usesTransport, conditional: 'transport' },
+    { key: 'examFee', label: 'Exam Fee', amount: s.examFee, include: false, conditional: 'exam' },
+  ];
+  res.json({
+    studentId: student.id, studentName: student.name, className: student.class?.name || null,
+    usesTransport: student.usesTransport, hasStructure: !!student.class?.feeStructure, lines,
+  });
+}));
+
+/** POST /api/fees/generate-class — create a bill for every active student in a class */
+router.post('/generate-class', requireRole('ADMIN'), asyncHandler(async (req, res) => {
+  const { classId, title, sessionLabel, dueDate, includeExam, less } = req.body || {};
+  if (!classId || !title) throw new AppError(400, 'classId and title required');
+  const cls = await prisma.class.findUnique({ where: { id: Number(classId) }, include: { feeStructure: true } });
+  if (!cls) throw new AppError(404, 'Class not found');
+  const s = cls.feeStructure || emptyStructure(cls.id);
+  const students = await prisma.student.findMany({ where: { classId: Number(classId), status: 'ACTIVE' } });
+
+  let created = 0;
+  for (const stu of students) {
+    const items: { description: string; amount: number }[] = [
+      { description: 'Annual Charge', amount: s.annualCharge },
+      { description: 'Monthly Tuition Fee', amount: s.monthlyTuition },
+      { description: 'Computer Fee', amount: s.computerFee },
+      { description: 'Miscellaneous Charges', amount: s.miscCharge },
+    ];
+    if (stu.usesTransport) items.push({ description: 'Transportation Charge', amount: stu.transportFee ?? s.transportFee });
+    if (includeExam) items.push({ description: 'Exam Fee', amount: s.examFee });
+    const filtered = items.filter((i) => Number(i.amount) > 0);
+    if (!filtered.length) continue;
+    await prisma.feeInvoice.create({
+      data: {
+        studentId: stu.id, title, sessionLabel: sessionLabel || null,
+        dueDate: dueDate ? new Date(dueDate) : null, discount: Number(less || 0),
+        items: { create: filtered.map((i) => ({ description: i.description, amount: Number(i.amount) })) },
+      },
+    });
+    created++;
+  }
+  res.json({ ok: true, created, total: students.length });
+}));
+
 /** GET /api/fees/:id */
 router.get('/:id', requireRole('ADMIN'), asyncHandler(async (req, res) => {
   const inv = await prisma.feeInvoice.findUnique({

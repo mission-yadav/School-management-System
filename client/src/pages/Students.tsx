@@ -29,7 +29,7 @@ export default function Students() {
   const [form, setForm] = useState<any>({
     name: '', admissionNo: '', iemis: '', rollNo: '', gender: 'MALE', dob: '', bloodGroup: '',
     phone: '', email: '', address: '', classId: '', sectionId: '',
-    parentName: '', parentPhone: '', allergies: '', disabilities: '',
+    parentName: '', parentPhone: '', allergies: '', disabilities: '', usesTransport: false, transportFee: '',
   });
 
   const sections = (classes || []).find((c: any) => String(c.id) === String(form.classId))?.sections || [];
@@ -38,7 +38,7 @@ export default function Students() {
     setForm({
       name: '', admissionNo: '', iemis: '', rollNo: '', gender: 'MALE', dob: '', bloodGroup: '',
       phone: '', email: '', address: '', classId: '', sectionId: '',
-      parentName: '', parentPhone: '', allergies: '', disabilities: '',
+      parentName: '', parentPhone: '', allergies: '', disabilities: '', usesTransport: false, transportFee: '',
     });
     setOpen(true);
   }
@@ -125,6 +125,12 @@ export default function Students() {
           </div>
           <Field label="Guardian Name"><Input value={form.parentName} onChange={(e) => setForm({ ...form, parentName: e.target.value })} /></Field>
           <Field label="Guardian Phone"><Input value={form.parentPhone} onChange={(e) => setForm({ ...form, parentPhone: e.target.value })} /></Field>
+          <div className="col-span-2 mt-2 text-sm font-medium text-gray-500">Transport</div>
+          <label className="flex items-center gap-2 text-sm text-slate-700">
+            <input type="checkbox" checked={!!form.usesTransport} onChange={(e) => setForm({ ...form, usesTransport: e.target.checked })} className="size-4 accent-[#262081]" />
+            Uses transport service
+          </label>
+          <Field label="Transport Fee (optional override)"><Input type="number" value={form.transportFee} onChange={(e) => setForm({ ...form, transportFee: e.target.value })} disabled={!form.usesTransport} /></Field>
           <div className="col-span-2 mt-2 text-sm font-medium text-gray-500">Medical</div>
           <Field label="Allergies"><Input value={form.allergies} onChange={(e) => setForm({ ...form, allergies: e.target.value })} /></Field>
           <Field label="Disabilities"><Input value={form.disabilities} onChange={(e) => setForm({ ...form, disabilities: e.target.value })} /></Field>

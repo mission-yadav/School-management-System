@@ -92,6 +92,13 @@ async function main() {
     });
     for (let j = 0; j < subjectNames.length; j++)
       await prisma.subject.create({ data: { name: subjectNames[j][0], code: `${subjectNames[j][1]}${classNames[i].replace(/\D/g, '')}`, credits: rand(3, 5), classId: cls.id, teacherId: teachers[j % teachers.length].id } });
+    // per-class fee structure (amounts scale with grade)
+    await prisma.feeStructure.create({ data: {
+      classId: cls.id,
+      annualCharge: 8000 + i * 1000, monthlyTuition: 2000 + i * 300,
+      computerFee: 500 + i * 100, examFee: 800 + i * 100,
+      transportFee: 1500, miscCharge: 300 + i * 50,
+    } });
     classes.push(cls);
   }
 
@@ -113,6 +120,7 @@ async function main() {
           aadhaar: String(rand(100000000000, 999999999999)), address: `${rand(1, 200)}, ${pick(['MG Road', 'Park Street', 'Lake View'])}, Bengaluru`,
           house: pick(['Red', 'Blue', 'Green', 'Yellow']), batch: '2026', emergencyContact: `98${rand(10000000, 99999999)}`,
           allergies: pick(['None', 'None', 'Peanuts', 'Dust']), classId: cls.id, sectionId: (cls as any).sections[r % 2].id, parentId: parent.id,
+          usesTransport: Math.random() < 0.4, transportFee: pick([1200, 1500, 1800]),
           admissionDate: new Date(2026, rand(0, 7), rand(1, 28)),
         },
       });
