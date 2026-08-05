@@ -29,7 +29,7 @@ const COMPONENTS: { key: string; header: string }[] = [
 export default function Fees() {
   return (
     <div>
-      <PageHeader title="Fee Management" subtitle="Bills, collections & fee structure" />
+      <PageHeader title="Fee Management" subtitle="Intimations, collections & fee structure" />
       <Tabs defaultValue="invoices">
         <TabsList>
           <TabsTrigger value="invoices">Invoices</TabsTrigger>
@@ -109,9 +109,9 @@ function InvoicesTab() {
         dueDate: form.dueDate, discount: less, fine: 0,
         items: included.map((l) => ({ description: l.label, amount: Number(l.amount || 0) })),
       });
-      toast('Bill created'); setOpenNew(false); reload();
+      toast('Intimation created'); setOpenNew(false); reload();
       const id = res.data?.id;
-      if (printAfter && id) { try { await downloadFile(`/pdf/bill/${id}`, `bill-${id}.pdf`); } catch (e) { toast(apiError(e), 'error'); } }
+      if (printAfter && id) { try { await downloadFile(`/pdf/intimation/${id}`, `intimation-${id}.pdf`); } catch (e) { toast(apiError(e), 'error'); } }
     } catch (e) { toast(apiError(e), 'error'); }
   }
 
@@ -125,7 +125,7 @@ function InvoicesTab() {
         classId: Number(bulk.classId), title: bulk.title, dueDate: bulk.dueDate,
         includeExam: bulk.includeExam, less: Number(bulk.less || 0),
       });
-      toast(`Generated ${res.data.created} bill(s)`); setOpenBulk(false); reload();
+      toast(`Generated ${res.data.created} intimation(s)`); setOpenBulk(false); reload();
     } catch (e) { toast(apiError(e), 'error'); }
   }
 
@@ -154,15 +154,16 @@ function InvoicesTab() {
   const money = (v: any) => (v ? inr(v) : '—');
   const columns: Column<any>[] = [
     { key: 'student', header: 'Student', render: (r) => (<div><div className="font-medium text-slate-800">{r.studentName}</div><div className="text-xs text-slate-500">{r.className} · IEMIS {r.iemis || '—'}</div></div>) },
-    { key: 'title', header: 'Bill', render: (r) => r.title },
+    { key: 'title', header: 'Fee', render: (r) => r.title },
     ...COMPONENTS.map((c) => ({ key: c.key, header: c.header, className: 'text-right whitespace-nowrap', render: (r: any) => money(r.components?.[c.key]) })),
     { key: 'total', header: 'Total', className: 'text-right font-medium', render: (r) => inr(r.total) },
     { key: 'paid', header: 'Paid', className: 'text-right', render: (r) => inr(r.paid) },
     { key: 'due', header: 'Due', className: 'text-right', render: (r) => inr(r.due) },
     { key: 'status', header: 'Status', render: (r) => <Badge variant={statusVariant(r.status)}>{r.status}</Badge> },
     { key: 'a', header: '', render: (r) => (
-      <div className="flex gap-1">
-        <Button size="sm" variant="ghost" onClick={() => downloadFile(`/pdf/bill/${r.id}`, `bill-${r.id}.pdf`)}>Bill</Button>
+      <div className="flex flex-wrap gap-1">
+        <Button size="sm" variant="ghost" onClick={() => downloadFile(`/pdf/intimation/${r.id}`, `intimation-${r.id}.pdf`)}>Intimation</Button>
+        {r.paid > 0 && <Button size="sm" variant="ghost" onClick={() => downloadFile(`/pdf/receipt/invoice/${r.id}`, `receipt-${r.id}.pdf`)}>Receipt</Button>}
         {r.status !== 'PAID' && <Button size="sm" variant="outline" onClick={() => startPay(r)}>Collect</Button>}
         <Button size="sm" variant="ghost" className="text-red-600" onClick={() => remove(r.id)}>Delete</Button>
       </div>
@@ -191,7 +192,7 @@ function InvoicesTab() {
         <Input className="w-56" placeholder={searchPlaceholder(listBy)} value={listSearch} onChange={(e) => setListSearch(e.target.value)} inputMode={listBy === 'iemis' ? 'numeric' : 'text'} />
         <div className="ml-auto flex gap-2">
           <Button variant="outline" onClick={() => { setBulk({ classId: '', title: 'Term Fees', dueDate: '', includeExam: false, less: '' }); setOpenBulk(true); }}>Generate for Class</Button>
-          <Button onClick={startNew}>+ New Bill</Button>
+          <Button onClick={startNew}>+ New Intimation</Button>
         </div>
       </div>
 
@@ -200,8 +201,8 @@ function InvoicesTab() {
       {/* New bill */}
       <Dialog open={openNew} onOpenChange={setOpenNew}>
         <DialogContent
-          title="New Fee Bill"
-          footer={<><Button variant="secondary" onClick={() => setOpenNew(false)}>Cancel</Button><Button variant="outline" onClick={() => createBill(false)}>Create</Button><Button onClick={() => createBill(true)}>Create & Print</Button></>}
+          title="New Fee Intimation"
+          footer={<><Button variant="secondary" onClick={() => setOpenNew(false)}>Cancel</Button><Button variant="outline" onClick={() => createBill(false)}>Create</Button><Button onClick={() => createBill(true)}>Create & Print Intimation</Button></>}
         >
           {/* student picker */}
           <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50/60 p-3">
@@ -221,7 +222,7 @@ function InvoicesTab() {
           </div>
 
           <div className="grid grid-cols-3 gap-3">
-            <Field label="Bill Title"><Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></Field>
+            <Field label="Intimation Title"><Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></Field>
             <Field label="Session"><Input value={form.sessionLabel} onChange={(e) => setForm({ ...form, sessionLabel: e.target.value })} /></Field>
             <Field label="Due Date"><Input type="date" value={form.dueDate} onChange={(e) => setForm({ ...form, dueDate: e.target.value })} /></Field>
           </div>
@@ -262,8 +263,8 @@ function InvoicesTab() {
 
       {/* bulk generate */}
       <Dialog open={openBulk} onOpenChange={setOpenBulk}>
-        <DialogContent title="Generate Bills for a Class" footer={<><Button variant="secondary" onClick={() => setOpenBulk(false)}>Cancel</Button><Button onClick={generateClass}>Generate</Button></>}>
-          <p className="mb-3 text-sm text-slate-500">Creates a bill for every active student in the class using that class's fee structure (transport added only for students who use it).</p>
+        <DialogContent title="Generate Intimations for a Class" footer={<><Button variant="secondary" onClick={() => setOpenBulk(false)}>Cancel</Button><Button onClick={generateClass}>Generate</Button></>}>
+          <p className="mb-3 text-sm text-slate-500">Creates a fee intimation for every active student in the class using that class's fee structure (transport added only for students who use it).</p>
           <div className="grid grid-cols-2 gap-3">
             <Field label="Class">
               <Select value={bulk.classId} onChange={(e) => setBulk({ ...bulk, classId: e.target.value })}>
@@ -271,7 +272,7 @@ function InvoicesTab() {
                 {(classes || []).map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </Select>
             </Field>
-            <Field label="Bill Title"><Input value={bulk.title} onChange={(e) => setBulk({ ...bulk, title: e.target.value })} /></Field>
+            <Field label="Intimation Title"><Input value={bulk.title} onChange={(e) => setBulk({ ...bulk, title: e.target.value })} /></Field>
             <Field label="Due Date"><Input type="date" value={bulk.dueDate} onChange={(e) => setBulk({ ...bulk, dueDate: e.target.value })} /></Field>
             <Field label="Less (each)"><Input type="number" value={bulk.less} onChange={(e) => setBulk({ ...bulk, less: e.target.value })} /></Field>
             <label className="col-span-2 flex items-center gap-2 text-sm text-slate-700">

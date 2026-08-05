@@ -89,7 +89,58 @@ function renderIdCard(res: any, school: SchoolInfo, s: any, cls: string, serial:
   });
 }
 
-/** GET /api/pdf/receipt/:paymentId — fee payment receipt */
+/** GET /api/pdf/receipt/invoice/:invoiceId — consolidated receipt for all payments on an invoice */
+router.get('/receipt/invoice/:invoiceId', asyncHandler(async (req, res) => {
+  const invoiceId = intParam(req.params.invoiceId, 'invoiceId');
+  const inv = await prisma.feeInvoice.findUnique({
+    where: { id: invoiceId },
+    include: { items: true, payments: { orderBy: { paidAt: 'asc' } }, student: { include: { class: { select: { name: true } } } } },
+  });
+  if (!inv) throw new AppError(404, 'Invoice not found');
+  if (inv.payments.length === 0) throw new AppError(400, 'No payments recorded yet');
+  const school = await getSchool();
+  const gross = inv.items.reduce((a, i) => a + i.amount, 0);
+  const total = gross + inv.fine - inv.discount;
+  const paid = inv.payments.reduce((a, p) => a + p.amount, 0);
+
+  streamPdf(res, `receipt-${inv.student.iemis || inv.student.admissionNo}.pdf`, (doc) => {
+    let y = letterhead(doc, school);
+    y = heading(doc, 'Fee Receipt', y);
+    doc.fontSize(10).fillColor('#555')
+      .text(`Receipt for Intimation No: SMS-${String(inv.id).padStart(5, '0')}`, 50, y)
+      .text(`Date: ${bsDate(new Date())}`, 50, y, { align: 'right' });
+    doc.fillColor('black').fontSize(12);
+
+    let dy = y + 30;
+    const info: [string, string][] = [
+      ['Student', inv.student.name], ['IEMIS ID', inv.student.iemis || '—'],
+      ['Class', inv.student.class?.name || '—'], ['Fee For', inv.title],
+    ];
+    for (const [k, v] of info) { doc.font('Helvetica-Bold').text(`${k}: `, 50, dy, { continued: true }).font('Helvetica').text(v); dy += 20; }
+
+    // payments table
+    dy += 8;
+    doc.rect(50, dy, doc.page.width - 100, 24).fill('#f0f0f7');
+    doc.fillColor(BRAND).font('Helvetica-Bold').fontSize(11)
+      .text('Receipt No', 60, dy + 6).text('Date', 200, dy + 6).text('Mode', 340, dy + 6).text('Amount (Rs.)', 50, dy + 6, { align: 'right' });
+    doc.fillColor('black').font('Helvetica'); dy += 30;
+    for (const p of inv.payments) {
+      doc.text(p.receiptNo, 60, dy).text(bsDate(p.paidAt), 200, dy).text(p.method, 340, dy)
+        .text(p.amount.toLocaleString('en-IN'), 50, dy, { align: 'right' });
+      dy += 20;
+    }
+    doc.moveTo(50, dy).lineTo(doc.page.width - 50, dy).stroke('#ccc'); dy += 10;
+    doc.font('Helvetica-Bold');
+    doc.text('Invoice Total', 60, dy).text(total.toLocaleString('en-IN'), 50, dy, { align: 'right' }); dy += 20;
+    doc.fillColor('green').text('Total Paid', 60, dy).text(paid.toLocaleString('en-IN'), 50, dy, { align: 'right' }); dy += 20;
+    doc.fillColor(total - paid > 0 ? 'red' : 'green').text('Balance Due', 60, dy).text((total - paid).toLocaleString('en-IN'), 50, dy, { align: 'right' });
+    doc.fillColor('black').font('Helvetica').fontSize(10)
+      .text(total - paid <= 0 ? 'Status: PAID IN FULL' : 'Status: PARTIALLY PAID', 60, dy + 26);
+    signatureBlock(doc);
+  });
+}));
+
+/** GET /api/pdf/receipt/:paymentId — fee payment receipt (single payment) */
 router.get('/receipt/:paymentId', asyncHandler(async (req, res) => {
   const paymentId = intParam(req.params.paymentId, 'paymentId');
   const payment = await prisma.payment.findUnique({
@@ -143,8 +194,8 @@ router.get('/receipt/:paymentId', asyncHandler(async (req, res) => {
   });
 }));
 
-/** GET /api/pdf/bill/:invoiceId — printable itemised fee bill (with Less) */
-router.get('/bill/:invoiceId', asyncHandler(async (req, res) => {
+/** GET /api/pdf/intimation/:invoiceId — fee Intimation Card (issued to demand payment) */
+router.get('/intimation/:invoiceId', asyncHandler(async (req, res) => {
   const invoiceId = intParam(req.params.invoiceId, 'invoiceId');
   const inv = await prisma.feeInvoice.findUnique({
     where: { id: invoiceId },
@@ -156,18 +207,18 @@ router.get('/bill/:invoiceId', asyncHandler(async (req, res) => {
   const total = gross + inv.fine - inv.discount;
   const paid = inv.payments.reduce((a, p) => a + p.amount, 0);
 
-  streamPdf(res, `bill-${inv.student.iemis || inv.student.admissionNo}.pdf`, (doc) => {
+  streamPdf(res, `intimation-${inv.student.iemis || inv.student.admissionNo}.pdf`, (doc) => {
     let y = letterhead(doc, school);
-    y = heading(doc, 'Fee Bill', y);
+    y = heading(doc, 'Fee Intimation Card', y);
     doc.fontSize(10).fillColor('#555')
-      .text(`Bill No: SMS-${String(inv.id).padStart(5, '0')}`, 50, y)
+      .text(`Intimation No: SMS-${String(inv.id).padStart(5, '0')}`, 50, y)
       .text(`Date: ${bsDate(inv.createdAt)}`, 50, y, { align: 'right' });
     doc.fillColor('black').fontSize(12);
 
     let dy = y + 30;
     const info: [string, string][] = [
       ['Student', inv.student.name], ['IEMIS ID', inv.student.iemis || '—'],
-      ['Class', inv.student.class?.name || '—'], ['Bill For', inv.title],
+      ['Class', inv.student.class?.name || '—'], ['Fee For', inv.title],
       ...(inv.dueDate ? [['Due Date', bsDate(inv.dueDate)] as [string, string]] : []),
     ];
     for (const [k, v] of info) { doc.font('Helvetica-Bold').text(`${k}: `, 50, dy, { continued: true }).font('Helvetica').text(v); dy += 20; }
@@ -197,7 +248,9 @@ router.get('/bill/:invoiceId', asyncHandler(async (req, res) => {
     doc.fillColor('green').text('Paid', 60, dy).text(paid.toLocaleString('en-IN'), 50, dy, { align: 'right' }); dy += 18;
     doc.fillColor(total - paid > 0 ? 'red' : 'green').font('Helvetica-Bold')
       .text('Balance Due', 60, dy).text((total - paid).toLocaleString('en-IN'), 50, dy, { align: 'right' });
-    doc.fillColor('black').font('Helvetica');
+    doc.fillColor('black').font('Helvetica').fontSize(9)
+      .text('Note: This is a fee intimation, not a receipt. Please clear the balance due by the due date. A receipt will be issued on payment.', 50, dy + 34, { width: doc.page.width - 100 });
+    doc.fontSize(11);
     signatureBlock(doc);
   });
 }));
