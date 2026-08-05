@@ -46,10 +46,8 @@ export default function Fees() {
 /* ============================================================== Invoices */
 function InvoicesTab() {
   const toast = useToast();
-  const [status, setStatus] = useState('');
-  const url = `/fees${status ? `?status=${status}` : ''}`;
-  const { data, loading, refetch } = useFetch<any[]>(url, [status]);
-  const { data: summary, refetch: refetchSummary } = useFetch<any>('/fees/summary', [status]);
+  const { data, loading, refetch } = useFetch<any[]>('/fees');
+  const { data: summary, refetch: refetchSummary } = useFetch<any>('/fees/summary');
   const { data: students } = useFetch<any[]>('/students');
   const { data: classes } = useFetch<any[]>('/classes');
 
@@ -191,9 +189,6 @@ function InvoicesTab() {
       </div>
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <Select value={status} onChange={(e) => setStatus(e.target.value)} className="w-40">
-          <option value="">All Statuses</option><option value="PENDING">Pending</option><option value="PARTIAL">Partial</option><option value="PAID">Paid</option>
-        </Select>
         <Select value={listClass} onChange={(e) => setListClass(e.target.value)} className="w-40">
           <option value="">All Classes</option>
           {(classes || []).map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
