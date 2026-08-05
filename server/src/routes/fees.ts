@@ -42,13 +42,14 @@ router.get('/', requireRole('ADMIN'), asyncHandler(async (req, res) => {
   const invoices = await prisma.feeInvoice.findMany({
     where,
     orderBy: { createdAt: 'desc' },
-    include: { items: true, payments: true, student: { include: { class: { select: { name: true } } } } },
+    include: { items: true, payments: true, student: { include: { class: { select: { id: true, name: true } } } } },
   });
   res.json(invoices.map((inv) => {
     const t = invoiceTotals(inv);
     return {
       id: inv.id, title: inv.title, studentId: inv.studentId,
-      studentName: inv.student.name, className: inv.student.class?.name || null,
+      studentName: inv.student.name, iemis: inv.student.iemis,
+      classId: inv.student.class?.id || null, className: inv.student.class?.name || null,
       dueDate: inv.dueDate, discount: inv.discount, fine: inv.fine,
       ...t, status: inv.status,
     };

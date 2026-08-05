@@ -25,6 +25,19 @@ export default function Fees() {
   const { data: categories } = useFetch<any[]>('/fees/categories');
   const { data: classes } = useFetch<any[]>('/classes');
 
+  // ---- invoice list filters (class + name/IEMIS) ----
+  const [listClass, setListClass] = useState('');
+  const [listBy, setListBy] = useState<SearchMode>('name');
+  const [listSearch, setListSearch] = useState('');
+  const filteredInvoices = (data || []).filter((r: any) => {
+    if (listClass && String(r.classId) !== String(listClass)) return false;
+    const term = listSearch.trim().toLowerCase();
+    if (!term) return true;
+    return listBy === 'iemis'
+      ? String(r.iemis || '').toLowerCase().includes(term)
+      : String(r.studentName || '').toLowerCase().includes(term);
+  });
+
   // ---- student picker filters (New invoice) ----
   const [pickClass, setPickClass] = useState('');
   const [stuBy, setStuBy] = useState<SearchMode>('name');
@@ -152,16 +165,28 @@ export default function Fees() {
       </CardContent></Card>
     </div>
 
-    <div className="mb-4 flex gap-3">
-      <Select value={status} onChange={(e) => setStatus(e.target.value)} className="w-48">
+    <div className="mb-4 flex flex-wrap items-center gap-3">
+      <Select value={status} onChange={(e) => setStatus(e.target.value)} className="w-44">
         <option value="">All Statuses</option>
         <option value="PENDING">Pending</option>
         <option value="PARTIAL">Partial</option>
         <option value="PAID">Paid</option>
       </Select>
+      <Select value={listClass} onChange={(e) => setListClass(e.target.value)} className="w-44">
+        <option value="">All Classes</option>
+        {(classes || []).map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
+      </Select>
+      <SearchModeToggle value={listBy} onChange={setListBy} />
+      <Input
+        className="w-64"
+        placeholder={searchPlaceholder(listBy)}
+        value={listSearch}
+        onChange={(e) => setListSearch(e.target.value)}
+        inputMode={listBy === 'iemis' ? 'numeric' : 'text'}
+      />
     </div>
 
-    {loading ? <Loading /> : <DataTable columns={columns} rows={data || []} />}
+    {loading ? <Loading /> : <DataTable columns={columns} rows={filteredInvoices} />}
 
     {/* New invoice */}
     <Dialog open={openNew} onOpenChange={setOpenNew}>
