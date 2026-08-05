@@ -165,6 +165,7 @@ function InvoicesTab() {
     { key: 'title', header: 'Fee', render: (r) => r.title },
     ...COMPONENTS.map((c) => ({ key: c.key, header: c.header, className: 'text-right whitespace-nowrap', render: (r: any) => money(r.components?.[c.key]) })),
     { key: 'total', header: 'Total', className: 'text-right font-medium', render: (r) => inr(r.total) },
+    { key: 'paid', header: 'Paid', className: 'text-right font-medium text-green-600', render: (r) => inr(r.paid) },
     { key: 'due', header: 'Dues', className: 'text-right', render: (r) => (
       <span className={`inline-block rounded-md px-2.5 py-1 text-sm font-semibold ${r.due > 0 ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'}`}>{inr(r.due)}</span>
     ) },
