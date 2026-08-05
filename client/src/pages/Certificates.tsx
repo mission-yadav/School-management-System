@@ -4,11 +4,12 @@ import { useFetch } from '@/lib/useFetch';
 import { PageHeader, Loading, EmptyState } from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
-import { Field } from '@/components/ui/input';
+import { Field, Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Badge, statusVariant } from '@/components/ui/badge';
 import { DataTable, type Column } from '@/components/ui/table';
 import { useToast } from '@/components/ui/toast';
+import { SearchModeToggle, searchPlaceholder, type SearchMode } from '@/components/SearchModeToggle';
 
 const TYPES = [
   { value: 'BONAFIDE', label: 'Bonafide' },
@@ -26,10 +27,24 @@ export default function Certificates() {
   const toast = useToast();
   const students = useFetch<any[]>('/students');
   const certificates = useFetch<any[]>('/certificates');
+  const classes = useFetch<any[]>('/classes');
 
   const [studentId, setStudentId] = useState('');
   const [type, setType] = useState('BONAFIDE');
   const [issuing, setIssuing] = useState(false);
+
+  // student picker filters
+  const [pickClass, setPickClass] = useState('');
+  const [stuBy, setStuBy] = useState<SearchMode>('name');
+  const [stuSearch, setStuSearch] = useState('');
+  const filteredStudents = (students.data || []).filter((s: any) => {
+    if (pickClass && String(s.classId) !== String(pickClass)) return false;
+    const term = stuSearch.trim().toLowerCase();
+    if (!term) return true;
+    return stuBy === 'iemis'
+      ? String(s.iemis || '').toLowerCase().includes(term)
+      : String(s.name || '').toLowerCase().includes(term);
+  });
 
   async function issue() {
     if (!studentId) {
@@ -99,14 +114,28 @@ export default function Certificates() {
           </CardHeader>
           <CardContent className="space-y-3">
             <Field label="Student">
-              <Select value={studentId} onChange={(e) => setStudentId(e.target.value)}>
-                <option value="">Select student</option>
-                {(students.data || []).map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name} (IEMIS {s.iemis || '—'})
-                  </option>
-                ))}
-              </Select>
+              <div className="space-y-2">
+                <Select value={pickClass} onChange={(e) => setPickClass(e.target.value)}>
+                  <option value="">All classes</option>
+                  {(classes.data || []).map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </Select>
+                <div className="flex items-center gap-2">
+                  <SearchModeToggle value={stuBy} onChange={setStuBy} />
+                  <Input
+                    className="flex-1"
+                    placeholder={searchPlaceholder(stuBy)}
+                    value={stuSearch}
+                    onChange={(e) => setStuSearch(e.target.value)}
+                    inputMode={stuBy === 'iemis' ? 'numeric' : 'text'}
+                  />
+                </div>
+                <Select value={studentId} onChange={(e) => setStudentId(e.target.value)}>
+                  <option value="">{`Select student (${filteredStudents.length})`}</option>
+                  {filteredStudents.map((s: any) => (
+                    <option key={s.id} value={s.id}>{s.name} · IEMIS {s.iemis || '—'} · {s.className || '—'}</option>
+                  ))}
+                </Select>
+              </div>
             </Field>
             <Field label="Type">
               <Select value={type} onChange={(e) => setType(e.target.value)}>
