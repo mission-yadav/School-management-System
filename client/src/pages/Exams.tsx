@@ -10,6 +10,7 @@ import { Badge, statusVariant } from '@/components/ui/badge';
 import { DataTable, type Column, Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { useToast } from '@/components/ui/toast';
+import { formatBS } from '@/lib/nepaliDate';
 
 export default function Exams() {
   const toast = useToast();
@@ -54,7 +55,7 @@ export default function Exams() {
     { header: 'Term', accessor: (r) => r.term },
     { header: '#Subjects', accessor: (r) => r._count?.subjects ?? 0 },
     { header: '#Results', accessor: (r) => r._count?.results ?? 0 },
-    { header: 'Created', accessor: (r) => new Date(r.createdAt).toLocaleDateString() },
+    { header: 'Created', accessor: (r) => formatBS(r.createdAt) },
     {
       header: '',
       accessor: (r) => (

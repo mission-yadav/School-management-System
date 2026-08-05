@@ -10,6 +10,7 @@ import { Badge, statusVariant } from '@/components/ui/badge';
 import { DataTable, type Column } from '@/components/ui/table';
 import { useToast } from '@/components/ui/toast';
 import { SearchModeToggle, searchPlaceholder, type SearchMode } from '@/components/SearchModeToggle';
+import { formatBS } from '@/lib/nepaliDate';
 
 const TYPES = [
   { value: 'BONAFIDE', label: 'Bonafide' },
@@ -83,7 +84,7 @@ export default function Certificates() {
     { header: 'Student', accessor: (r) => r.studentName },
     { header: 'IEMIS ID', accessor: (r) => r.iemis || '—' },
     { header: 'Type', accessor: (r) => <Badge variant={statusVariant(r.type)}>{typeLabel(r.type)}</Badge> },
-    { header: 'Issued', accessor: (r) => new Date(r.issuedAt).toLocaleDateString() },
+    { header: 'Issued', accessor: (r) => formatBS(r.issuedAt) },
     {
       header: '',
       accessor: (r) => (

@@ -8,6 +8,7 @@ import { Input, Label, Field } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Card, CardContent } from '@/components/ui/card';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
+import { formatBS } from '@/lib/nepaliDate';
 import { useToast } from '@/components/ui/toast';
 
 const STATUSES: { key: string; label: string }[] = [
@@ -101,6 +102,7 @@ export default function Attendance() {
           <Field className="min-w-[160px]">
             <Label>Date</Label>
             <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+            {date && <div className="mt-1 text-xs font-medium text-brand">{formatBS(date)} BS</div>}
           </Field>
           <div className="flex gap-2">
             <Button variant="outline" onClick={() => setAll('PRESENT')} disabled={!rows.length}>

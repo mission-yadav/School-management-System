@@ -8,6 +8,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input, Field } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { DataTable, type Column } from '@/components/ui/table';
+import { bsMonthLabel } from '@/lib/nepaliDate';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { useToast } from '@/components/ui/toast';
 
@@ -81,8 +82,9 @@ export default function Payroll() {
   return (<div>
     <PageHeader title="Payroll" subtitle="Generate & manage payslips" actions={<Button onClick={startNew}>Generate Payslip</Button>} />
 
-    <div className="mb-4">
+    <div className="mb-4 flex items-center gap-3">
       <Input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="w-48" />
+      <span className="rounded-lg bg-brand-50 px-3 py-1.5 text-sm font-medium text-brand">{bsMonthLabel(month)} <span className="text-brand-400">BS</span></span>
     </div>
 
     <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3">

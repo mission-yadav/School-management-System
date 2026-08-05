@@ -5,9 +5,11 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+import { formatBS } from './nepaliDate';
+
 export const inr = (n: number | null | undefined) => '₹' + Number(n || 0).toLocaleString('en-IN');
 
-export function formatDate(d: string | Date | null | undefined, opts?: Intl.DateTimeFormatOptions) {
-  if (!d) return '—';
-  return new Date(d).toLocaleDateString('en-IN', opts || { day: '2-digit', month: 'short', year: 'numeric' });
+/** Dates are displayed in the Nepali (Bikram Sambat) calendar throughout the app. */
+export function formatDate(d: string | Date | null | undefined) {
+  return formatBS(d);
 }

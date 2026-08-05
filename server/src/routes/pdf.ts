@@ -3,7 +3,7 @@ import prisma from '../prisma.js';
 import { authRequired } from '../middleware/auth.js';
 import { asyncHandler, AppError, intParam } from '../lib/http.js';
 import { streamPdf, letterhead, heading, signatureBlock, BRAND, type SchoolInfo } from '../lib/pdf.js';
-import dayjs from 'dayjs';
+import { bsDate } from '../lib/nepaliDate.js';
 
 const router = Router();
 router.use(authRequired);
@@ -46,7 +46,7 @@ router.get('/certificate/:id', asyncHandler(async (req, res) => {
     let y = letterhead(doc, school);
     y = heading(doc, title, y);
     doc.fontSize(10).fillColor('#555').text(`Serial No: ${cert.serialNo}`, 50, y, { align: 'right' });
-    doc.text(`Date: ${dayjs(cert.issuedAt).format('DD MMM YYYY')}`, 50, y + 14, { align: 'right' });
+    doc.text(`Date: ${bsDate(cert.issuedAt)}`, 50, y + 14, { align: 'right' });
     doc.fillColor('black').fontSize(12).text(' ', 50, y + 40);
     doc.moveDown(2);
     const text = (BODY[cert.type] || BODY.BONAFIDE)(s.name, cls);
@@ -55,7 +55,7 @@ router.get('/certificate/:id', asyncHandler(async (req, res) => {
     doc.moveDown(2);
     const details: [string, string][] = [
       ['Name', s.name], ['IEMIS ID', s.iemis || '—'], ['Roll No', s.rollNo || '—'],
-      ['Class', cls], ['Date of Birth', s.dob ? dayjs(s.dob).format('DD MMM YYYY') : '—'],
+      ['Class', cls], ['Date of Birth', s.dob ? bsDate(s.dob) : '—'],
       ['Gender', s.gender || '—'],
     ];
     let dy = doc.y + 20;
@@ -107,7 +107,7 @@ router.get('/receipt/:paymentId', asyncHandler(async (req, res) => {
     y = heading(doc, 'Fee Receipt', y);
     doc.fontSize(10).fillColor('#555')
       .text(`Receipt No: ${payment.receiptNo}`, 50, y)
-      .text(`Date: ${dayjs(payment.paidAt).format('DD MMM YYYY, hh:mm A')}`, 50, y, { align: 'right' });
+      .text(`Date: ${bsDate(payment.paidAt, true)}`, 50, y, { align: 'right' });
     doc.fillColor('black').fontSize(12);
 
     let dy = y + 30;
@@ -161,14 +161,14 @@ router.get('/bill/:invoiceId', asyncHandler(async (req, res) => {
     y = heading(doc, 'Fee Bill', y);
     doc.fontSize(10).fillColor('#555')
       .text(`Bill No: SMS-${String(inv.id).padStart(5, '0')}`, 50, y)
-      .text(`Date: ${dayjs(inv.createdAt).format('DD MMM YYYY')}`, 50, y, { align: 'right' });
+      .text(`Date: ${bsDate(inv.createdAt)}`, 50, y, { align: 'right' });
     doc.fillColor('black').fontSize(12);
 
     let dy = y + 30;
     const info: [string, string][] = [
       ['Student', inv.student.name], ['IEMIS ID', inv.student.iemis || '—'],
       ['Class', inv.student.class?.name || '—'], ['Bill For', inv.title],
-      ...(inv.dueDate ? [['Due Date', dayjs(inv.dueDate).format('DD MMM YYYY')] as [string, string]] : []),
+      ...(inv.dueDate ? [['Due Date', bsDate(inv.dueDate)] as [string, string]] : []),
     ];
     for (const [k, v] of info) { doc.font('Helvetica-Bold').text(`${k}: `, 50, dy, { continued: true }).font('Helvetica').text(v); dy += 20; }
 

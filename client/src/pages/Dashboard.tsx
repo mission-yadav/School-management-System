@@ -10,6 +10,7 @@ import {
 import { useAuth } from '@/context/auth';
 import { useFetch } from '@/lib/useFetch';
 import { inr } from '@/lib/utils';
+import { formatBS, bsMonthLabel } from '@/lib/nepaliDate';
 import { PageHeader, Loading } from '@/components/PageHeader';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -61,8 +62,8 @@ export default function Dashboard() {
             <ResponsiveContainer width="100%" height={240}>
               <BarChart data={c.revenueVsExpenses}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
-                <XAxis dataKey="month" fontSize={11} /><YAxis fontSize={11} />
-                <Tooltip formatter={(v: any) => inr(v)} />
+                <XAxis dataKey="month" fontSize={11} tickFormatter={bsMonthLabel} /><YAxis fontSize={11} />
+                <Tooltip formatter={(v: any) => inr(v)} labelFormatter={(l: any) => bsMonthLabel(String(l))} />
                 <Legend />
                 <Bar dataKey="revenue" fill="#262081" radius={[4, 4, 0, 0]} />
                 <Bar dataKey="expense" fill="#a9a4df" radius={[4, 4, 0, 0]} />
@@ -83,8 +84,8 @@ export default function Dashboard() {
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
-                <XAxis dataKey="month" fontSize={11} /><YAxis fontSize={11} />
-                <Tooltip formatter={(v: any) => inr(v)} />
+                <XAxis dataKey="month" fontSize={11} tickFormatter={bsMonthLabel} /><YAxis fontSize={11} />
+                <Tooltip formatter={(v: any) => inr(v)} labelFormatter={(l: any) => bsMonthLabel(String(l))} />
                 <Area type="monotone" dataKey="amount" stroke="#262081" fill="url(#fee)" strokeWidth={2} />
               </AreaChart>
             </ResponsiveContainer>
@@ -113,7 +114,7 @@ export default function Dashboard() {
                 <Pie data={c.expenseBreakdown} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} label={(e: any) => e.name}>
                   {c.expenseBreakdown.map((_: any, i: number) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
                 </Pie>
-                <Tooltip formatter={(v: any) => inr(v)} />
+                <Tooltip formatter={(v: any) => inr(v)} labelFormatter={(l: any) => bsMonthLabel(String(l))} />
               </PieChart>
             </ResponsiveContainer>
           </CardContent>
@@ -151,7 +152,7 @@ export default function Dashboard() {
               <ul className="space-y-2 text-sm">
                 {data.upcomingEvents.map((e: any) => (
                   <li key={e.id} className="flex justify-between"><span className="text-slate-700">{e.title}</span>
-                    <span className="text-xs text-slate-400">{new Date(e.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}</span></li>
+                    <span className="text-xs text-slate-400">{formatBS(e.date)}</span></li>
                 ))}
               </ul>
             )}
@@ -190,7 +191,7 @@ function TeacherDashboard({ data, name }: { data: any; name: string }) {
               <ul className="divide-y divide-slate-100">
                 {data.recentNotices.map((n: any) => (
                   <li key={n.id} className="flex justify-between py-2 text-sm"><span className="text-slate-700">{n.title}</span>
-                    <span className="text-xs text-slate-400">{new Date(n.createdAt).toLocaleDateString()}</span></li>
+                    <span className="text-xs text-slate-400">{formatBS(n.createdAt)}</span></li>
                 ))}
               </ul>
             )}

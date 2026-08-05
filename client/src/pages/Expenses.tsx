@@ -10,6 +10,7 @@ import { Select } from '@/components/ui/select';
 import { DataTable, type Column } from '@/components/ui/table';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { useToast } from '@/components/ui/toast';
+import { formatBS, bsMonthLabel } from '@/lib/nepaliDate';
 
 export default function Expenses() {
   const toast = useToast();
@@ -65,7 +66,7 @@ export default function Expenses() {
   }
 
   const columns: Column<any>[] = [
-    { key: 'date', header: 'Date', render: (r) => (r.date ? new Date(r.date).toLocaleDateString() : '—') },
+    { key: 'date', header: 'Date', render: (r) => formatBS(r.date) },
     { key: 'title', header: 'Title', render: (r) => r.title },
     { key: 'categoryName', header: 'Category', render: (r) => r.categoryName || '—' },
     { key: 'vendorName', header: 'Vendor', render: (r) => r.vendorName || '—' },
@@ -105,8 +106,9 @@ export default function Expenses() {
       </Card>
     </div>
 
-    <div className="mb-4 flex flex-wrap gap-3">
+    <div className="mb-4 flex flex-wrap items-center gap-3">
       <Input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="w-48" />
+      {month && <span className="rounded-lg bg-brand-50 px-3 py-1.5 text-sm font-medium text-brand">{bsMonthLabel(month)} <span className="text-brand-400">BS</span></span>}
       <Select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className="w-48">
         <option value="">All Categories</option>
         {(categories || []).map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
