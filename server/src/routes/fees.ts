@@ -51,6 +51,7 @@ router.get('/', requireRole('ADMIN'), asyncHandler(async (req, res) => {
       studentName: inv.student.name, iemis: inv.student.iemis,
       classId: inv.student.class?.id || null, className: inv.student.class?.name || null,
       dueDate: inv.dueDate, discount: inv.discount, fine: inv.fine,
+      components: componentsOf(inv.items),
       ...t, status: inv.status,
     };
   }));
@@ -67,6 +68,25 @@ router.get('/summary', requireRole('ADMIN'), asyncHandler(async (_req, res) => {
 /* -------------------------------------------------- fee structure (per class) */
 function emptyStructure(classId: number) {
   return { classId, annualCharge: 0, monthlyTuition: 0, computerFee: 0, examFee: 0, transportFee: 0, miscCharge: 0 };
+}
+
+// Canonical fee-component order — Monthly first, Annual second, Miscellaneous last.
+const FEE_ORDER: { key: string; label: string; conditional?: 'transport' | 'exam' }[] = [
+  { key: 'monthlyTuition', label: 'Monthly Tuition Fee' },
+  { key: 'annualCharge', label: 'Annual Charge' },
+  { key: 'computerFee', label: 'Computer Fee' },
+  { key: 'transportFee', label: 'Transportation Charge', conditional: 'transport' },
+  { key: 'examFee', label: 'Exam Fee', conditional: 'exam' },
+  { key: 'miscCharge', label: 'Miscellaneous Charges' },
+];
+const LABEL_TO_KEY: Record<string, string> = Object.fromEntries(FEE_ORDER.map((f) => [f.label, f.key]));
+
+/** Break an invoice's items into the canonical component keys (amount per component). */
+function componentsOf(items: { description: string; amount: number }[]) {
+  const out: Record<string, number> = {};
+  for (const f of FEE_ORDER) out[f.key] = 0;
+  for (const it of items) { const k = LABEL_TO_KEY[it.description]; if (k) out[k] = it.amount; }
+  return out;
 }
 
 /** GET /api/fees/structure — every class with its fee structure */
@@ -107,14 +127,15 @@ router.get('/prefill', requireRole('ADMIN'), asyncHandler(async (req, res) => {
   if (!student) throw new AppError(404, 'Student not found');
   const s = student.class?.feeStructure || emptyStructure(student.classId || 0);
   const transportAmt = student.transportFee ?? s.transportFee ?? 0;
-  const lines = [
-    { key: 'annualCharge', label: 'Annual Charge', amount: s.annualCharge, include: true },
-    { key: 'monthlyTuition', label: 'Monthly Tuition Fee', amount: s.monthlyTuition, include: true },
-    { key: 'computerFee', label: 'Computer Fee', amount: s.computerFee, include: true },
-    { key: 'miscCharge', label: 'Miscellaneous Charges', amount: s.miscCharge, include: true },
-    { key: 'transportFee', label: 'Transportation Charge', amount: transportAmt, include: !!student.usesTransport, conditional: 'transport' },
-    { key: 'examFee', label: 'Exam Fee', amount: s.examFee, include: false, conditional: 'exam' },
-  ];
+  const amounts: Record<string, number> = {
+    monthlyTuition: s.monthlyTuition, annualCharge: s.annualCharge, computerFee: s.computerFee,
+    transportFee: transportAmt, examFee: s.examFee, miscCharge: s.miscCharge,
+  };
+  const lines = FEE_ORDER.map((f) => ({
+    key: f.key, label: f.label, amount: amounts[f.key],
+    include: f.conditional === 'transport' ? !!student.usesTransport : f.conditional === 'exam' ? false : true,
+    ...(f.conditional ? { conditional: f.conditional } : {}),
+  }));
   res.json({
     studentId: student.id, studentName: student.name, className: student.class?.name || null,
     usesTransport: student.usesTransport, hasStructure: !!student.class?.feeStructure, lines,
@@ -132,14 +153,13 @@ router.post('/generate-class', requireRole('ADMIN'), asyncHandler(async (req, re
 
   let created = 0;
   for (const stu of students) {
-    const items: { description: string; amount: number }[] = [
-      { description: 'Annual Charge', amount: s.annualCharge },
-      { description: 'Monthly Tuition Fee', amount: s.monthlyTuition },
-      { description: 'Computer Fee', amount: s.computerFee },
-      { description: 'Miscellaneous Charges', amount: s.miscCharge },
-    ];
-    if (stu.usesTransport) items.push({ description: 'Transportation Charge', amount: stu.transportFee ?? s.transportFee });
-    if (includeExam) items.push({ description: 'Exam Fee', amount: s.examFee });
+    const amounts: Record<string, number> = {
+      monthlyTuition: s.monthlyTuition, annualCharge: s.annualCharge, computerFee: s.computerFee,
+      transportFee: stu.transportFee ?? s.transportFee, examFee: s.examFee, miscCharge: s.miscCharge,
+    };
+    const items = FEE_ORDER
+      .filter((f) => (f.conditional === 'transport' ? stu.usesTransport : f.conditional === 'exam' ? includeExam : true))
+      .map((f) => ({ description: f.label, amount: amounts[f.key] }));
     const filtered = items.filter((i) => Number(i.amount) > 0);
     if (!filtered.length) continue;
     await prisma.feeInvoice.create({

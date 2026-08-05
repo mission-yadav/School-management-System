@@ -16,6 +16,16 @@ import { SearchModeToggle, searchPlaceholder, type SearchMode } from '@/componen
 
 type Line = { key: string; label: string; amount: number | string; include: boolean; conditional?: string };
 
+// Canonical component order — Monthly first, Annual second, Miscellaneous last.
+const COMPONENTS: { key: string; header: string }[] = [
+  { key: 'monthlyTuition', header: 'Monthly' },
+  { key: 'annualCharge', header: 'Annual' },
+  { key: 'computerFee', header: 'Computer' },
+  { key: 'transportFee', header: 'Transport' },
+  { key: 'examFee', header: 'Exam' },
+  { key: 'miscCharge', header: 'Misc' },
+];
+
 export default function Fees() {
   return (
     <div>
@@ -141,12 +151,14 @@ function InvoicesTab() {
     try { await api.delete(`/fees/${id}`); toast('Deleted'); reload(); } catch (e) { toast(apiError(e), 'error'); }
   }
 
+  const money = (v: any) => (v ? inr(v) : '—');
   const columns: Column<any>[] = [
     { key: 'student', header: 'Student', render: (r) => (<div><div className="font-medium text-slate-800">{r.studentName}</div><div className="text-xs text-slate-500">{r.className} · IEMIS {r.iemis || '—'}</div></div>) },
     { key: 'title', header: 'Bill', render: (r) => r.title },
-    { key: 'total', header: 'Total', render: (r) => inr(r.total) },
-    { key: 'paid', header: 'Paid', render: (r) => inr(r.paid) },
-    { key: 'due', header: 'Due', render: (r) => inr(r.due) },
+    ...COMPONENTS.map((c) => ({ key: c.key, header: c.header, className: 'text-right whitespace-nowrap', render: (r: any) => money(r.components?.[c.key]) })),
+    { key: 'total', header: 'Total', className: 'text-right font-medium', render: (r) => inr(r.total) },
+    { key: 'paid', header: 'Paid', className: 'text-right', render: (r) => inr(r.paid) },
+    { key: 'due', header: 'Due', className: 'text-right', render: (r) => inr(r.due) },
     { key: 'status', header: 'Status', render: (r) => <Badge variant={statusVariant(r.status)}>{r.status}</Badge> },
     { key: 'a', header: '', render: (r) => (
       <div className="flex gap-1">
@@ -293,11 +305,11 @@ function InvoicesTab() {
 
 /* ======================================================= Fee Structure */
 const STRUCT_COLS: { key: string; label: string }[] = [
-  { key: 'annualCharge', label: 'Annual' },
   { key: 'monthlyTuition', label: 'Monthly Tuition' },
+  { key: 'annualCharge', label: 'Annual' },
   { key: 'computerFee', label: 'Computer' },
-  { key: 'examFee', label: 'Exam' },
   { key: 'transportFee', label: 'Transport' },
+  { key: 'examFee', label: 'Exam' },
   { key: 'miscCharge', label: 'Misc' },
 ];
 

@@ -155,24 +155,36 @@ async function main() {
   }
   console.log('  exams + results seeded');
 
-  // fees: invoice per student, some payments
+  // fees: a structured bill per student (from class fee structure), some payments
   const admin = await prisma.user.findFirstOrThrow({ where: { role: Role.ADMIN } });
+  const structures = await prisma.feeStructure.findMany();
+  const structByClass = new Map(structures.map((s) => [s.classId, s]));
+  // canonical order: Monthly, Annual, Computer, Transport, (Exam skipped for term bill), Misc
+  const FEE_LABELS: [string, string][] = [
+    ['monthlyTuition', 'Monthly Tuition Fee'], ['annualCharge', 'Annual Charge'],
+    ['computerFee', 'Computer Fee'], ['transportFee', 'Transportation Charge'], ['miscCharge', 'Miscellaneous Charges'],
+  ];
   for (const st of students) {
+    const s: any = st.classId ? structByClass.get(st.classId) : null;
+    if (!s) continue;
+    const amounts: any = {
+      monthlyTuition: s.monthlyTuition, annualCharge: s.annualCharge, computerFee: s.computerFee,
+      transportFee: st.transportFee ?? s.transportFee, miscCharge: s.miscCharge,
+    };
+    const items: { description: string; amount: number }[] = [];
+    for (const [key, label] of FEE_LABELS) {
+      if (key === 'transportFee' && !st.usesTransport) continue;
+      if (amounts[key] > 0) items.push({ description: label, amount: amounts[key] });
+    }
+    const gross = items.reduce((a, i) => a + i.amount, 0);
     const inv = await prisma.feeInvoice.create({
-      data: {
-        studentId: st.id, title: 'Term 1 Fees', sessionLabel: '2026-2027', dueDate: new Date(2026, 8, 15),
-        items: { create: [
-          { description: 'Tuition Fee', amount: 15000, categoryId: feeCats.find((c) => c.name === 'Tuition')?.id },
-          { description: 'Lab & Library', amount: 3000, categoryId: feeCats.find((c) => c.name === 'Lab')?.id },
-        ] },
-      },
+      data: { studentId: st.id, title: 'Term 1 Fees', sessionLabel: '2026-2027', dueDate: new Date(2026, 8, 15), items: { create: items } },
     });
-    const total = 18000;
     const roll = Math.random();
-    const payNow = roll < 0.5 ? total : roll < 0.8 ? 9000 : 0;
+    const payNow = roll < 0.5 ? gross : roll < 0.8 ? Math.round(gross / 2) : 0;
     if (payNow > 0) {
       await prisma.payment.create({ data: { invoiceId: inv.id, amount: payNow, method: pick(['CASH', 'UPI', 'CARD', 'BANK_TRANSFER']) as any, receiptNo: `RCPT${Date.now()}${rand(100, 999)}`, receivedById: admin.id } });
-      await prisma.feeInvoice.update({ where: { id: inv.id }, data: { status: payNow >= total ? 'PAID' : 'PARTIAL' } });
+      await prisma.feeInvoice.update({ where: { id: inv.id }, data: { status: payNow >= gross ? 'PAID' : 'PARTIAL' } });
     }
   }
   console.log('  fee invoices + payments seeded');
