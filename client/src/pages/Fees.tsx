@@ -172,9 +172,9 @@ function InvoicesTab() {
     ) },
     { key: 'a', header: '', render: (r) => (
       <div className="flex flex-wrap gap-1">
-        <Button size="sm" variant="ghost" onClick={() => downloadFile(`/pdf/intimation/${r.id}`, `intimation-${r.id}.pdf`)}>Intimation</Button>
+        <Button size="sm" variant="outline" onClick={() => downloadFile(`/pdf/intimation/${r.id}`, `intimation-${r.id}.pdf`)}>Intimation</Button>
         {r.status !== 'PAID' && <Button size="sm" variant="outline" onClick={() => startPay(r)}>Collect</Button>}
-        <Button size="sm" variant="ghost" onClick={() => openRecordFor(r)}>Record</Button>
+        <Button size="sm" variant="outline" onClick={() => openRecordFor(r)}>Record</Button>
         <Button size="sm" variant="ghost" className="text-red-600" onClick={() => remove(r.id)}>Delete</Button>
       </div>
     ) },
