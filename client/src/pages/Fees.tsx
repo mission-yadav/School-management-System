@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import api, { apiError, downloadFile } from '@/lib/api';
 import { useFetch } from '@/lib/useFetch';
 import { inr } from '@/lib/utils';
-import { PageHeader, Loading } from '@/components/PageHeader';
+import { formatBS } from '@/lib/nepaliDate';
+import { PageHeader, Loading, EmptyState } from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input, Field } from '@/components/ui/input';
@@ -134,16 +135,25 @@ function InvoicesTab() {
   const [payRow, setPayRow] = useState<any>(null);
   const [pay, setPay] = useState<any>({ amount: '', method: 'CASH', reference: '' });
   function startPay(row: any) { setPayRow(row); setPay({ amount: String(row.due ?? ''), method: 'CASH', reference: '' }); setOpenPay(true); }
-  async function collect() {
+  async function collect(printReceipt: boolean) {
     if (!payRow) return;
     try {
       const res = await api.post(`/fees/${payRow.id}/pay`, { amount: Number(pay.amount || 0), method: pay.method, reference: pay.reference });
       const { receiptNo, paymentId } = res.data || {};
-      toast(`Receipt ${receiptNo}`); setOpenPay(false); reload();
-      if (paymentId && confirm(`Download receipt ${receiptNo}?`)) {
+      toast(`Payment recorded · ${receiptNo}`); setOpenPay(false); reload();
+      if (printReceipt && paymentId) {
         try { await downloadFile(`/pdf/receipt/${paymentId}`, `${receiptNo}.pdf`); } catch (e) { toast(apiError(e), 'error'); }
       }
     } catch (e) { toast(apiError(e), 'error'); }
+  }
+
+  // ---- payment record (history) dialog ----
+  const [openRecord, setOpenRecord] = useState(false);
+  const [record, setRecord] = useState<any>(null);
+  async function openRecordFor(row: any) {
+    setRecord(null); setOpenRecord(true);
+    try { const { data } = await api.get(`/fees/${row.id}`); setRecord(data); }
+    catch (e) { toast(apiError(e), 'error'); setOpenRecord(false); }
   }
 
   async function remove(id: number) {
@@ -163,8 +173,8 @@ function InvoicesTab() {
     { key: 'a', header: '', render: (r) => (
       <div className="flex flex-wrap gap-1">
         <Button size="sm" variant="ghost" onClick={() => downloadFile(`/pdf/intimation/${r.id}`, `intimation-${r.id}.pdf`)}>Intimation</Button>
-        {r.paid > 0 && <Button size="sm" variant="ghost" onClick={() => downloadFile(`/pdf/receipt/invoice/${r.id}`, `receipt-${r.id}.pdf`)}>Receipt</Button>}
         {r.status !== 'PAID' && <Button size="sm" variant="outline" onClick={() => startPay(r)}>Collect</Button>}
+        <Button size="sm" variant="ghost" onClick={() => openRecordFor(r)}>Record</Button>
         <Button size="sm" variant="ghost" className="text-red-600" onClick={() => remove(r.id)}>Delete</Button>
       </div>
     ) },
@@ -285,7 +295,7 @@ function InvoicesTab() {
 
       {/* payment */}
       <Dialog open={openPay} onOpenChange={setOpenPay}>
-        <DialogContent title="Collect Payment" footer={<><Button variant="secondary" onClick={() => setOpenPay(false)}>Cancel</Button><Button onClick={collect}>Collect</Button></>}>
+        <DialogContent title="Collect Payment" footer={<><Button variant="secondary" onClick={() => setOpenPay(false)}>Cancel</Button><Button variant="outline" onClick={() => collect(false)}>Collect</Button><Button onClick={() => collect(true)}>Collect & Receipt</Button></>}>
           {payRow && (
             <div className="grid grid-cols-2 gap-3">
               <div className="col-span-2 text-sm text-slate-500">{payRow.studentName} — {payRow.title} (Due {inr(payRow.due)})</div>
@@ -296,6 +306,50 @@ function InvoicesTab() {
                 </Select>
               </Field>
               <div className="col-span-2"><Field label="Reference"><Input value={pay.reference} onChange={(e) => setPay({ ...pay, reference: e.target.value })} /></Field></div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* payment record / history */}
+      <Dialog open={openRecord} onOpenChange={setOpenRecord}>
+        <DialogContent
+          className="max-w-2xl"
+          title="Payment Record"
+          footer={record?.payments?.length ? <Button variant="outline" onClick={() => downloadFile(`/pdf/receipt/invoice/${record.id}`, `receipt-${record.id}.pdf`)}>Download Full Receipt</Button> : undefined}
+        >
+          {!record ? <Loading /> : (
+            <div>
+              <div className="mb-3 text-sm text-slate-600">
+                <span className="font-medium text-slate-800">{record.student?.name}</span> · {record.title}
+                {record.student?.iemis && <span className="text-slate-400"> · IEMIS {record.student.iemis}</span>}
+              </div>
+              <div className="mb-4 grid grid-cols-3 gap-2 rounded-lg bg-slate-50 p-3 text-sm">
+                <div><div className="text-slate-500">Total</div><div className="font-semibold">{inr(record.total)}</div></div>
+                <div><div className="text-slate-500">Paid</div><div className="font-semibold text-green-600">{inr(record.paid)}</div></div>
+                <div><div className="text-slate-500">Balance</div><div className="font-semibold text-red-600">{inr(record.due ?? (record.total - record.paid))}</div></div>
+              </div>
+              {(!record.payments || record.payments.length === 0) ? (
+                <EmptyState title="No payments yet" description="Payments recorded here will each get a receipt." />
+              ) : (
+                <Table>
+                  <THead>
+                    <TR className="hover:bg-transparent"><TH>#</TH><TH>Date</TH><TH>Receipt No</TH><TH>Mode</TH><TH className="text-right">Amount</TH><TH></TH></TR>
+                  </THead>
+                  <TBody>
+                    {[...record.payments].sort((a: any, b: any) => new Date(a.paidAt).getTime() - new Date(b.paidAt).getTime()).map((p: any, i: number) => (
+                      <TR key={p.id}>
+                        <TD>{i + 1}</TD>
+                        <TD>{formatBS(p.paidAt)}</TD>
+                        <TD className="font-mono text-xs">{p.receiptNo}</TD>
+                        <TD>{p.method}</TD>
+                        <TD className="text-right">{inr(p.amount)}</TD>
+                        <TD><Button size="sm" variant="ghost" onClick={() => downloadFile(`/pdf/receipt/${p.id}`, `${p.receiptNo}.pdf`)}>Receipt</Button></TD>
+                      </TR>
+                    ))}
+                  </TBody>
+                </Table>
+              )}
             </div>
           )}
         </DialogContent>

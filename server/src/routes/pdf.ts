@@ -151,7 +151,8 @@ router.get('/receipt/:paymentId', asyncHandler(async (req, res) => {
   const school = await getSchool();
   const inv = payment.invoice;
   const total = inv.items.reduce((a, i) => a + i.amount, 0) + inv.fine - inv.discount;
-  const paidToDate = inv.payments.reduce((a, p) => a + p.amount, 0);
+  // cumulative amount paid up to and including this payment (so the receipt reflects the balance at that time)
+  const paidToDate = inv.payments.filter((p) => p.id <= payment.id).reduce((a, p) => a + p.amount, 0);
 
   streamPdf(res, `${payment.receiptNo}.pdf`, (doc) => {
     let y = letterhead(doc, school);
