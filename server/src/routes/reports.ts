@@ -2,6 +2,7 @@ import { Router } from 'express';
 import prisma from '../prisma.js';
 import { authRequired, requireRole } from '../middleware/auth.js';
 import { asyncHandler, AppError, intParam } from '../lib/http.js';
+import { computeAudit } from '../lib/audit.js';
 
 const router = Router();
 router.use(authRequired);
@@ -145,6 +146,15 @@ router.get('/admissions', asyncHandler(async (req, res) => {
     createdAt: a.createdAt,
   }));
   sendReport(req, res, rows, 'admissions');
+}));
+
+/**
+ * GET /api/reports/audit — NFRS-style audit report:
+ *  - Income & Expenditure Statement (heading-wise, accrual basis)
+ *  - Balance Sheet (Statement of Financial Position)
+ */
+router.get('/audit', requireRole('ADMIN'), asyncHandler(async (_req, res) => {
+  res.json(await computeAudit());
 }));
 
 export default router;

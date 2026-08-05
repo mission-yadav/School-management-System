@@ -3,7 +3,7 @@ import {
   LayoutDashboard, Users, GraduationCap, School, BookOpen, ClipboardCheck,
   FileText, Wallet, CalendarDays, Megaphone, Award, BarChart3, Settings,
   Search, Receipt, Briefcase, UserPlus, CalendarClock, Bus, Library, Boxes,
-  MessageSquare, HeartPulse, Building2,
+  MessageSquare, HeartPulse, Building2, Landmark,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -54,6 +54,7 @@ export const NAV: NavGroup[] = [
       { to: '/fees', label: 'Fee Management', icon: Wallet, roles: A },
       { to: '/expenses', label: 'Expenses', icon: Receipt, roles: A },
       { to: '/payroll', label: 'Payroll', icon: Wallet, roles: A },
+      { to: '/audit', label: 'Audit Report', icon: Landmark, roles: A },
     ],
   },
   {

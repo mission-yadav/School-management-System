@@ -4,6 +4,7 @@ import { authRequired } from '../middleware/auth.js';
 import { asyncHandler, AppError, intParam } from '../lib/http.js';
 import { streamPdf, letterhead, heading, signatureBlock, BRAND, type SchoolInfo } from '../lib/pdf.js';
 import { bsDate } from '../lib/nepaliDate.js';
+import { computeAudit, type Line } from '../lib/audit.js';
 
 const router = Router();
 router.use(authRequired);
@@ -253,6 +254,76 @@ router.get('/intimation/:invoiceId', asyncHandler(async (req, res) => {
       .text('Note: This is a fee intimation, not a receipt. Please clear the balance due by the due date. A receipt will be issued on payment.', 50, dy + 34, { width: doc.page.width - 100 });
     doc.fontSize(11);
     signatureBlock(doc);
+  });
+}));
+
+/** GET /api/pdf/audit — NFRS Income & Expenditure Statement + Balance Sheet */
+router.get('/audit', asyncHandler(async (_req, res) => {
+  const school = await getSchool();
+  const a = await computeAudit();
+  const amt = (n: number) => (n < 0 ? `(${Math.abs(n).toLocaleString('en-IN')})` : n.toLocaleString('en-IN'));
+
+  streamPdf(res, `audit-report.pdf`, (doc) => {
+    const W = doc.page.width;
+    let y = letterhead(doc, school);
+    doc.fillColor(BRAND).fontSize(14).font('Helvetica-Bold').text('Audit Report (NFRS)', 50, y, { align: 'center' });
+    doc.fillColor('#555').font('Helvetica').fontSize(9)
+      .text(`As on ${bsDate(a.generatedAt)} (BS)  ·  All figures in ${a.currency}`, 50, y + 20, { align: 'center' });
+    let dy = y + 46;
+
+    const rowLine = (label: string, value: number, opts: { bold?: boolean; color?: string; indent?: number } = {}) => {
+      doc.font(opts.bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(10).fillColor(opts.color || 'black');
+      doc.text(label, 60 + (opts.indent || 0), dy, { width: W - 220 });
+      doc.text(amt(value), W - 200, dy, { width: 140, align: 'right' });
+      dy += 18;
+    };
+    const sectionBar = (title: string) => {
+      doc.rect(50, dy, W - 100, 22).fill('#eeedf8');
+      doc.fillColor(BRAND).font('Helvetica-Bold').fontSize(11).text(title, 60, dy + 5);
+      doc.fillColor('black'); dy += 30;
+    };
+    const rule = () => { doc.moveTo(50, dy).lineTo(W - 50, dy).stroke('#ccc'); dy += 6; };
+
+    // ---- Income & Expenditure ----
+    sectionBar('Income & Expenditure Statement');
+    doc.font('Helvetica-Bold').fontSize(10).fillColor('#555').text('INCOME', 60, dy); dy += 16;
+    for (const l of a.incomeExpenditure.income) rowLine(l.heading, l.amount, { indent: 10 });
+    if (a.incomeExpenditure.discounts > 0) rowLine('Less: Discounts / Concessions', -a.incomeExpenditure.discounts, { indent: 10, color: '#b91c1c' });
+    rule();
+    rowLine('Total Income', a.incomeExpenditure.totalIncome, { bold: true });
+    dy += 8;
+    doc.font('Helvetica-Bold').fontSize(10).fillColor('#555').text('EXPENDITURE', 60, dy); dy += 16;
+    for (const l of a.incomeExpenditure.expenditure) rowLine(l.heading, l.amount, { indent: 10 });
+    rule();
+    rowLine('Total Expenditure', a.incomeExpenditure.totalExpenditure, { bold: true });
+    dy += 6;
+    const surplus = a.incomeExpenditure.surplus;
+    doc.rect(50, dy, W - 100, 24).fill(surplus >= 0 ? '#e8f5e9' : '#fdecea');
+    doc.font('Helvetica-Bold').fontSize(11).fillColor(surplus >= 0 ? '#1b5e20' : '#b71c1c')
+      .text(surplus >= 0 ? 'Surplus for the period' : 'Deficit for the period', 60, dy + 6)
+      .text(amt(surplus), W - 200, dy + 6, { width: 140, align: 'right' });
+    doc.fillColor('black'); dy += 40;
+
+    // ---- Balance Sheet ----
+    sectionBar('Balance Sheet (Statement of Financial Position)');
+    doc.font('Helvetica-Bold').fontSize(10).fillColor('#555').text('ASSETS', 60, dy); dy += 16;
+    for (const l of a.balanceSheet.assets) rowLine(l.heading, l.amount, { indent: 10 });
+    rule();
+    rowLine('Total Assets', a.balanceSheet.totalAssets, { bold: true });
+    dy += 8;
+    doc.font('Helvetica-Bold').fontSize(10).fillColor('#555').text('FUND & LIABILITIES', 60, dy); dy += 16;
+    for (const l of a.balanceSheet.fund) rowLine(l.heading, l.amount, { indent: 10 });
+    for (const l of a.balanceSheet.liabilities) rowLine(l.heading, l.amount, { indent: 10 });
+    rule();
+    rowLine('Total Fund & Liabilities', a.balanceSheet.totalFundLiabilities, { bold: true });
+
+    dy += 18;
+    doc.font('Helvetica-Oblique').fontSize(8).fillColor('#777')
+      .text('Prepared on an accrual basis in accordance with Nepal Financial Reporting Standards (NFRS). Opening fund balance assumed nil.', 50, dy, { width: W - 100 });
+    dy += 40;
+    doc.font('Helvetica').fontSize(11).fillColor('black');
+    doc.text('_____________________', 50, dy).text('_____________________', W - 240, dy);
+    doc.text('Prepared By', 50, dy + 15).text('Principal / Authorised Signatory', W - 240, dy + 15);
   });
 }));
 

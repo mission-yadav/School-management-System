@@ -23,6 +23,7 @@ import Timetable from '@/pages/Timetable';
 import Fees from '@/pages/Fees';
 import Expenses from '@/pages/Expenses';
 import Payroll from '@/pages/Payroll';
+import AuditReport from '@/pages/AuditReport';
 import Certificates from '@/pages/Certificates';
 import Reports from '@/pages/Reports';
 import Notices from '@/pages/Notices';
@@ -59,6 +60,7 @@ createRoot(document.getElementById('root')!).render(
                 <Route path="/fees" element={<Fees />} />
                 <Route path="/expenses" element={<Expenses />} />
                 <Route path="/payroll" element={<Payroll />} />
+                <Route path="/audit" element={<AuditReport />} />
                 <Route path="/certificates" element={<Certificates />} />
                 <Route path="/reports" element={<Reports />} />
                 <Route path="/events" element={<Events />} />
