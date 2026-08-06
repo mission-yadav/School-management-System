@@ -15,7 +15,8 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { useToast } from '@/components/ui/toast';
 import { SearchModeToggle, searchPlaceholder, type SearchMode } from '@/components/SearchModeToggle';
 import { PdfPreviewDialog, type PdfPreview } from '@/components/PdfPreviewDialog';
-import { StudentFormDialog } from '@/components/StudentFormDialog';
+import { FeeEditDialog } from '@/components/FeeEditDialog';
+import { StudentLedgerDialog } from '@/components/StudentLedgerDialog';
 import { Pencil } from 'lucide-react';
 
 type Line = { key: string; label: string; amount: number | string; include: boolean; conditional?: string };
@@ -58,7 +59,8 @@ function InvoicesTab() {
 
   // PDF preview + student edit dialogs
   const [preview, setPreview] = useState<PdfPreview | null>(null);
-  const [studentDialog, setStudentDialog] = useState<{ open: boolean; id: number | null }>({ open: false, id: null });
+  const [feeEdit, setFeeEdit] = useState<{ open: boolean; invoiceId: number | null; studentId: number | null }>({ open: false, invoiceId: null, studentId: null });
+  const [ledgerId, setLedgerId] = useState<number | null>(null);
 
   // ---- list filters ----
   const [listClass, setListClass] = useState('');
@@ -164,15 +166,6 @@ function InvoicesTab() {
     } catch (e) { toast(apiError(e), 'error'); }
   }
 
-  // ---- payment record (history) dialog ----
-  const [openRecord, setOpenRecord] = useState(false);
-  const [record, setRecord] = useState<any>(null);
-  async function openRecordFor(row: any) {
-    setRecord(null); setOpenRecord(true);
-    try { const { data } = await api.get(`/fees/${row.id}`); setRecord(data); }
-    catch (e) { toast(apiError(e), 'error'); setOpenRecord(false); }
-  }
-
   async function remove(id: number) {
     if (!confirm('Delete invoice?')) return;
     try { await api.delete(`/fees/${id}`); toast('Deleted'); reload(); } catch (e) { toast(apiError(e), 'error'); }
@@ -181,7 +174,7 @@ function InvoicesTab() {
   const money = (v: any) => (v ? inr(v) : '—');
   const columns: Column<any>[] = [
     { key: 'edit', header: '', className: 'w-10', render: (r) => (
-      <Button size="icon" variant="ghost" className="h-8 w-8 text-brand" title="Edit student" onClick={() => setStudentDialog({ open: true, id: r.studentId })}><Pencil className="size-4" /></Button>
+      <Button size="icon" variant="ghost" className="h-8 w-8 text-brand" title="Edit fees" onClick={() => setFeeEdit({ open: true, invoiceId: r.id, studentId: r.studentId })}><Pencil className="size-4" /></Button>
     ) },
     { key: 'student', header: 'Student', render: (r) => (
       <div>
@@ -203,7 +196,7 @@ function InvoicesTab() {
       <div className="flex flex-wrap gap-1">
         <Button size="sm" variant="outline" onClick={() => setPreview({ url: `/pdf/intimation/${r.id}`, filename: `intimation-${r.id}.pdf`, title: 'Fee Intimation Card' })}>Intimation</Button>
         {r.status !== 'PAID' && <Button size="sm" variant="outline" onClick={() => startPay(r)}>Collect</Button>}
-        <Button size="sm" variant="outline" onClick={() => openRecordFor(r)}>Record</Button>
+        <Button size="sm" variant="outline" onClick={() => setLedgerId(r.studentId)}>Record</Button>
         <Button size="sm" variant="ghost" className="text-red-600" onClick={() => remove(r.id)}>Delete</Button>
       </div>
     ) },
@@ -346,56 +339,19 @@ function InvoicesTab() {
         </DialogContent>
       </Dialog>
 
-      {/* payment record / history */}
-      <Dialog open={openRecord} onOpenChange={setOpenRecord}>
-        <DialogContent
-          className="max-w-2xl"
-          title="Payment Record"
-          footer={record?.payments?.length ? <Button variant="outline" onClick={() => setPreview({ url: `/pdf/receipt/invoice/${record.id}`, filename: `receipt-${record.id}.pdf`, title: 'Fee Receipt' })}>Full Receipt</Button> : undefined}
-        >
-          {!record ? <Loading /> : (
-            <div>
-              <div className="mb-3 text-sm text-slate-600">
-                <span className="font-medium text-slate-800">{record.student?.name}</span> · {record.title}
-                {record.student?.iemis && <span className="text-slate-400"> · IEMIS {record.student.iemis}</span>}
-              </div>
-              <div className="mb-4 grid grid-cols-3 gap-2 rounded-lg bg-slate-50 p-3 text-sm">
-                <div><div className="text-slate-500">Total</div><div className="font-semibold">{inr(record.total)}</div></div>
-                <div><div className="text-slate-500">Paid</div><div className="font-semibold text-green-600">{inr(record.paid)}</div></div>
-                <div><div className="text-slate-500">Balance</div><div className="font-semibold text-red-600">{inr(record.due ?? (record.total - record.paid))}</div></div>
-              </div>
-              {(!record.payments || record.payments.length === 0) ? (
-                <EmptyState title="No payments yet" description="Payments recorded here will each get a receipt." />
-              ) : (
-                <Table>
-                  <THead>
-                    <TR className="hover:bg-transparent"><TH>#</TH><TH>Date</TH><TH>Receipt No</TH><TH>Mode</TH><TH className="text-right">Amount</TH><TH></TH></TR>
-                  </THead>
-                  <TBody>
-                    {[...record.payments].sort((a: any, b: any) => new Date(a.paidAt).getTime() - new Date(b.paidAt).getTime()).map((p: any, i: number) => (
-                      <TR key={p.id}>
-                        <TD>{i + 1}</TD>
-                        <TD>{formatBS(p.paidAt)}</TD>
-                        <TD className="font-mono text-xs">{p.receiptNo}</TD>
-                        <TD>{p.method}</TD>
-                        <TD className="text-right">{inr(p.amount)}</TD>
-                        <TD><Button size="sm" variant="ghost" onClick={() => setPreview({ url: `/pdf/receipt/${p.id}`, filename: `${p.receiptNo}.pdf`, title: 'Fee Receipt' })}>Receipt</Button></TD>
-                      </TR>
-                    ))}
-                  </TBody>
-                </Table>
-              )}
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
-
       <PdfPreviewDialog preview={preview} onClose={() => setPreview(null)} />
-      <StudentFormDialog
-        open={studentDialog.open}
-        studentId={studentDialog.id}
-        onClose={() => setStudentDialog({ open: false, id: null })}
+      <FeeEditDialog
+        open={feeEdit.open}
+        invoiceId={feeEdit.invoiceId}
+        studentId={feeEdit.studentId}
+        onClose={() => setFeeEdit({ open: false, invoiceId: null, studentId: null })}
         onSaved={() => { reload(); refetchStudents(); }}
+      />
+      <StudentLedgerDialog
+        open={ledgerId !== null}
+        studentId={ledgerId}
+        onClose={() => setLedgerId(null)}
+        onPreview={setPreview}
       />
     </div>
   );

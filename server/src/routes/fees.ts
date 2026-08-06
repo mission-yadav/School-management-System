@@ -184,6 +184,50 @@ router.post('/generate-class', requireRole('ADMIN'), asyncHandler(async (req, re
   res.json({ ok: true, created, total: students.length });
 }));
 
+/** GET /api/fees/ledger/:studentId — full fee ledger for a student
+ *  (all bills across years, annual/monthly breakdown, previous dues, payment history) */
+router.get('/ledger/:studentId', requireRole('ADMIN'), asyncHandler(async (req, res) => {
+  const studentId = intParam(req.params.studentId, 'studentId');
+  const student = await prisma.student.findUnique({
+    where: { id: studentId },
+    include: { class: { select: { name: true } } },
+  });
+  if (!student) throw new AppError(404, 'Student not found');
+
+  const invRows = await prisma.feeInvoice.findMany({
+    where: { studentId },
+    orderBy: { createdAt: 'asc' },
+    include: { items: true, payments: { orderBy: { paidAt: 'asc' } } },
+  });
+
+  let billed = 0, paidTotal = 0;
+  const invoices = invRows.map((inv) => {
+    const t = invoiceTotals(inv);
+    billed += t.total; paidTotal += t.paid;
+    return {
+      id: inv.id, title: inv.title, sessionLabel: inv.sessionLabel,
+      createdAt: inv.createdAt, dueDate: inv.dueDate, status: inv.status,
+      items: inv.items.map((i) => ({ description: i.description, amount: i.amount })),
+      discount: inv.discount, fine: inv.fine, gross: t.gross, total: t.total, paid: t.paid, due: t.due,
+      payments: inv.payments.map((p) => ({ id: p.id, receiptNo: p.receiptNo, amount: p.amount, method: p.method, paidAt: p.paidAt })),
+    };
+  });
+
+  const payments = invRows
+    .flatMap((inv) => inv.payments.map((p) => ({ id: p.id, receiptNo: p.receiptNo, amount: p.amount, method: p.method, paidAt: p.paidAt, invoiceTitle: inv.title })))
+    .sort((a, b) => new Date(a.paidAt).getTime() - new Date(b.paidAt).getTime());
+
+  res.json({
+    student: {
+      id: student.id, name: student.name, iemis: student.iemis, className: student.class?.name || null,
+      feeFree: student.feeFree, usesTransport: student.usesTransport, transportFee: student.transportFee,
+    },
+    totals: { billed, paid: paidTotal, due: billed - paidTotal },
+    invoices,
+    payments,
+  });
+}));
+
 /** GET /api/fees/:id */
 router.get('/:id', requireRole('ADMIN'), asyncHandler(async (req, res) => {
   const inv = await prisma.feeInvoice.findUnique({
@@ -232,14 +276,26 @@ router.post('/:id/pay', requireRole('ADMIN'), asyncHandler(async (req, res) => {
   res.json({ ok: true, receiptNo, paymentId: payment.id, status: newStatus });
 }));
 
-/** PUT /api/fees/:id (ADMIN) — adjust discount/fine/due */
+/** PUT /api/fees/:id (ADMIN) — edit title/due/discount(Less)/fine and (optionally) all line items */
 router.put('/:id', requireRole('ADMIN'), asyncHandler(async (req, res) => {
   const id = intParam(req.params.id);
-  const { discount, fine, dueDate } = req.body || {};
+  const { title, discount, fine, dueDate, items } = req.body || {};
   const data: any = {};
-  if (discount !== undefined) data.discount = Number(discount);
-  if (fine !== undefined) data.fine = Number(fine);
+  if (title !== undefined) data.title = title;
+  if (discount !== undefined) data.discount = Number(discount || 0);
+  if (fine !== undefined) data.fine = Number(fine || 0);
   if (dueDate !== undefined) data.dueDate = dueDate ? new Date(dueDate) : null;
+
+  // replace all line items when provided
+  if (Array.isArray(items)) {
+    await prisma.feeItem.deleteMany({ where: { invoiceId: id } });
+    data.items = {
+      create: items
+        .filter((i: any) => i.description && Number(i.amount) >= 0)
+        .map((i: any) => ({ description: i.description, amount: Number(i.amount), categoryId: i.categoryId || null })),
+    };
+  }
+
   const inv = await prisma.feeInvoice.update({ where: { id }, data, include: { items: true, payments: true } });
   const { total, paid } = invoiceTotals(inv);
   await prisma.feeInvoice.update({ where: { id }, data: { status: statusFor(total, paid) } });
