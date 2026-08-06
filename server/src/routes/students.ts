@@ -42,7 +42,7 @@ router.get(
     }
     const students = await prisma.student.findMany({
       where,
-      orderBy: [{ classId: 'asc' }, { rollNo: 'asc' }, { name: 'asc' }],
+      orderBy: [{ classId: 'asc' }, { name: 'asc' }],
       include: { class: { select: { name: true } }, section: { select: { name: true } } },
     });
     res.json(
