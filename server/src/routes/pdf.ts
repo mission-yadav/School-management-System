@@ -231,9 +231,9 @@ router.get('/intimation/:invoiceId', asyncHandler(async (req, res) => {
       .text('Particulars', 60, dy + 6).text('Amount (Rs.)', 50, dy + 6, { align: 'right' });
     doc.fillColor('black').font('Helvetica');
     dy += 30;
-    const ORDER = ['Monthly Tuition Fee', 'Annual Charge', 'Computer Fee', 'Transportation Charge', 'Exam Fee', 'Miscellaneous Charges'];
-    const rank = (d: string) => { const i = ORDER.indexOf(d); return i < 0 ? 99 : i; };
-    const billItems = [...inv.items].sort((a, b) => rank(a.description) - rank(b.description));
+    const ORDER = ['Annual Charge', 'Computer Fee', 'Transportation Charge', 'Exam Fee', 'Miscellaneous Charges'];
+    const rank = (it: any) => it.bsMonth ? it.bsMonth : 100 + (ORDER.indexOf(it.description) < 0 ? 90 : ORDER.indexOf(it.description));
+    const billItems = [...inv.items].sort((a, b) => rank(a) - rank(b));
     for (const it of billItems) {
       doc.text(it.description, 60, dy).text(it.amount.toLocaleString('en-IN'), 50, dy, { align: 'right' });
       dy += 20;

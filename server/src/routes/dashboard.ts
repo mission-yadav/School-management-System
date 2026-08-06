@@ -40,7 +40,7 @@ router.get('/', asyncHandler(async (req, res) => {
     prisma.class.count(),
     prisma.student.count({ where: { admissionDate: { gte: monthStart } } }),
     prisma.event.findMany({ where: { date: { gte: new Date(now.toDateString()) } }, orderBy: { date: 'asc' }, take: 5 }),
-    prisma.feeInvoice.findMany({ include: { items: true, payments: true } }),
+    prisma.feeInvoice.findMany({ where: { isLedger: true }, include: { items: true, payments: true } }),
     prisma.payment.findMany({ select: { amount: true, paidAt: true } }),
     prisma.expense.findMany({ select: { amount: true, date: true, categoryId: true } }),
     prisma.studentAttendance.findMany({ where: { date: new Date(now.toDateString()) }, select: { status: true } }),

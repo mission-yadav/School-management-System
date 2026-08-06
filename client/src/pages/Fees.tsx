@@ -197,7 +197,6 @@ function InvoicesTab() {
         <Button size="sm" variant="outline" onClick={() => setPreview({ url: `/pdf/intimation/${r.id}`, filename: `intimation-${r.id}.pdf`, title: 'Fee Intimation Card' })}>Intimation</Button>
         {r.status !== 'PAID' && <Button size="sm" variant="outline" onClick={() => startPay(r)}>Collect</Button>}
         <Button size="sm" variant="outline" onClick={() => setLedgerId(r.studentId)}>Record</Button>
-        <Button size="sm" variant="ghost" className="text-red-600" onClick={() => remove(r.id)}>Delete</Button>
       </div>
     ) },
   ];
@@ -219,107 +218,10 @@ function InvoicesTab() {
         </Select>
         <SearchModeToggle value={listBy} onChange={setListBy} />
         <Input className="w-56" placeholder={searchPlaceholder(listBy)} value={listSearch} onChange={(e) => setListSearch(e.target.value)} inputMode={listBy === 'iemis' ? 'numeric' : 'text'} />
-        <div className="ml-auto flex gap-2">
-          <Button variant="outline" onClick={() => { setBulk({ classId: '', title: 'Term Fees', dueDate: '', includeExam: false, less: '' }); setOpenBulk(true); }}>Generate for Class</Button>
-          <Button onClick={startNew}>+ New Intimation</Button>
-        </div>
+        <span className="ml-auto text-xs text-slate-400">One running ledger per student · monthly tuition auto-added each month</span>
       </div>
 
       {loading ? <Loading /> : <DataTable columns={columns} rows={filteredInvoices} />}
-
-      {/* New bill */}
-      <Dialog open={openNew} onOpenChange={setOpenNew}>
-        <DialogContent
-          title="New Fee Intimation"
-          footer={<><Button variant="secondary" onClick={() => setOpenNew(false)}>Cancel</Button><Button variant="outline" onClick={() => createBill(false)}>Create</Button><Button onClick={() => createBill(true)}>Create & Print Intimation</Button></>}
-        >
-          {/* student picker */}
-          <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50/60 p-3">
-            <div className="mb-2 text-sm font-medium text-slate-600">Select Student</div>
-            <div className="mb-2 flex flex-wrap items-center gap-2">
-              <Select value={pickClass} onChange={(e) => setPickClass(e.target.value)} className="w-36">
-                <option value="">All classes</option>
-                {(classes || []).map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </Select>
-              <SearchModeToggle value={stuBy} onChange={setStuBy} />
-              <Input className="min-w-[9rem] flex-1" placeholder={searchPlaceholder(stuBy)} value={stuSearch} onChange={(e) => setStuSearch(e.target.value)} inputMode={stuBy === 'iemis' ? 'numeric' : 'text'} />
-            </div>
-            <Select value={form.studentId} onChange={(e) => setForm({ ...form, studentId: e.target.value })}>
-              <option value="">{`Select student (${filteredStudents.length})`}</option>
-              {filteredStudents.map((s: any) => <option key={s.id} value={s.id}>{s.name} · IEMIS {s.iemis || '—'} · {s.className || '—'}</option>)}
-            </Select>
-            {form.studentId && (
-              <label className="mt-2 flex items-center gap-2 text-sm text-slate-700">
-                <input type="checkbox" checked={free} onChange={(e) => toggleFree(e.target.checked)} className="size-4 accent-[#262081]" />
-                <span className="font-medium">Free</span>
-                <span className="text-slate-400">— waive monthly tuition fee</span>
-                {free && <span className="rounded bg-green-100 px-2 py-0.5 text-xs font-bold text-green-700">FREE</span>}
-              </label>
-            )}
-          </div>
-
-          <div className="grid grid-cols-3 gap-3">
-            <Field label="Intimation Title"><Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></Field>
-            <Field label="Session"><Input value={form.sessionLabel} onChange={(e) => setForm({ ...form, sessionLabel: e.target.value })} /></Field>
-            <Field label="Due Date"><Input type="date" value={form.dueDate} onChange={(e) => setForm({ ...form, dueDate: e.target.value })} /></Field>
-          </div>
-
-          {/* fee components */}
-          {form.studentId && (
-            <div className="mt-4">
-              <div className="mb-2 text-sm font-medium text-slate-600">Fee Components</div>
-              <div className="rounded-lg border border-slate-200">
-                {lines.map((l, i) => (
-                  <label key={l.key} className="flex items-center gap-3 border-b border-slate-100 px-3 py-2 last:border-0">
-                    <input type="checkbox" checked={l.include} onChange={(e) => setLine(i, { include: e.target.checked })} className="size-4 accent-[#262081]" />
-                    <span className="flex-1 text-sm text-slate-700">
-                      {l.label}
-                      {l.conditional === 'transport' && <span className="ml-2 text-xs text-amber-600">(if service taken)</span>}
-                      {l.conditional === 'exam' && <span className="ml-2 text-xs text-blue-600">(exam season)</span>}
-                      {(l as any).waived && <span className="ml-2 text-xs font-semibold text-green-600">(Free — waived)</span>}
-                    </span>
-                    <span className="text-slate-400">₹</span>
-                    <Input type="number" className="w-28" value={l.amount} onChange={(e) => setLine(i, { amount: e.target.value })} disabled={!l.include} />
-                  </label>
-                ))}
-              </div>
-
-              <div className="mt-3 flex items-center justify-end gap-4">
-                <div className="text-right text-sm">
-                  <div className="text-slate-500">Sub Total: <b className="text-slate-700">{inr(gross)}</b></div>
-                </div>
-                <Field label="Less (deduction)"><Input type="number" className="w-32" value={form.less} onChange={(e) => setForm({ ...form, less: e.target.value })} /></Field>
-                <div className="rounded-lg bg-brand-50 px-4 py-2 text-right">
-                  <div className="text-xs text-brand">Grand Total</div>
-                  <div className="text-lg font-bold text-brand">{inr(grand)}</div>
-                </div>
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
-
-      {/* bulk generate */}
-      <Dialog open={openBulk} onOpenChange={setOpenBulk}>
-        <DialogContent title="Generate Intimations for a Class" footer={<><Button variant="secondary" onClick={() => setOpenBulk(false)}>Cancel</Button><Button onClick={generateClass}>Generate</Button></>}>
-          <p className="mb-3 text-sm text-slate-500">Creates a fee intimation for every active student in the class using that class's fee structure (transport added only for students who use it).</p>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Class">
-              <Select value={bulk.classId} onChange={(e) => setBulk({ ...bulk, classId: e.target.value })}>
-                <option value="">Select class</option>
-                {(classes || []).map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </Select>
-            </Field>
-            <Field label="Intimation Title"><Input value={bulk.title} onChange={(e) => setBulk({ ...bulk, title: e.target.value })} /></Field>
-            <Field label="Due Date"><Input type="date" value={bulk.dueDate} onChange={(e) => setBulk({ ...bulk, dueDate: e.target.value })} /></Field>
-            <Field label="Less (each)"><Input type="number" value={bulk.less} onChange={(e) => setBulk({ ...bulk, less: e.target.value })} /></Field>
-            <label className="col-span-2 flex items-center gap-2 text-sm text-slate-700">
-              <input type="checkbox" checked={bulk.includeExam} onChange={(e) => setBulk({ ...bulk, includeExam: e.target.checked })} className="size-4 accent-[#262081]" />
-              Include Exam Fee (exam season)
-            </label>
-          </div>
-        </DialogContent>
-      </Dialog>
 
       {/* payment */}
       <Dialog open={openPay} onOpenChange={setOpenPay}>

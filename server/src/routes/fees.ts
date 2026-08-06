@@ -2,6 +2,7 @@ import { Router } from 'express';
 import prisma from '../prisma.js';
 import { authRequired, requireRole } from '../middleware/auth.js';
 import { asyncHandler, AppError, intParam } from '../lib/http.js';
+import { ensureLedger, ensureAllLedgers, currentBS, BS_MONTHS } from '../lib/ledger.js';
 
 const router = Router();
 router.use(authRequired);
@@ -39,6 +40,8 @@ router.get('/', requireRole('ADMIN'), asyncHandler(async (req, res) => {
   const where: any = {};
   if (studentId) where.studentId = Number(studentId);
   if (status) where.status = status;
+  // running ledgers (one per active student) are the fee records shown
+  if (!studentId) { where.isLedger = true; await ensureAllLedgers(); }
   const invoices = await prisma.feeInvoice.findMany({
     where,
     orderBy: [{ student: { name: 'asc' } }, { createdAt: 'desc' }],
@@ -59,7 +62,7 @@ router.get('/', requireRole('ADMIN'), asyncHandler(async (req, res) => {
 
 /** GET /api/fees/summary — dashboard/reports totals */
 router.get('/summary', requireRole('ADMIN'), asyncHandler(async (_req, res) => {
-  const invoices = await prisma.feeInvoice.findMany({ include: { items: true, payments: true } });
+  const invoices = await prisma.feeInvoice.findMany({ where: { isLedger: true }, include: { items: true, payments: true } });
   let billed = 0, collected = 0;
   for (const inv of invoices) { const t = invoiceTotals(inv); billed += t.total; collected += t.paid; }
   res.json({ billed, collected, due: billed - collected, invoiceCount: invoices.length });
@@ -81,11 +84,15 @@ const FEE_ORDER: { key: string; label: string; conditional?: 'transport' | 'exam
 ];
 const LABEL_TO_KEY: Record<string, string> = Object.fromEntries(FEE_ORDER.map((f) => [f.label, f.key]));
 
-/** Break an invoice's items into the canonical component keys (amount per component). */
-function componentsOf(items: { description: string; amount: number }[]) {
+/** Break an invoice's items into the canonical component keys (amount per component).
+ *  Month-wise tuition items (bsMonth set) are summed under monthlyTuition. */
+function componentsOf(items: { description: string; amount: number; bsMonth?: number | null }[]) {
   const out: Record<string, number> = {};
   for (const f of FEE_ORDER) out[f.key] = 0;
-  for (const it of items) { const k = LABEL_TO_KEY[it.description]; if (k) out[k] = it.amount; }
+  for (const it of items) {
+    if (it.bsMonth) { out.monthlyTuition += it.amount; continue; }
+    const k = LABEL_TO_KEY[it.description]; if (k) out[k] = (out[k] || 0) + it.amount;
+  }
   return out;
 }
 
@@ -184,48 +191,65 @@ router.post('/generate-class', requireRole('ADMIN'), asyncHandler(async (req, re
   res.json({ ok: true, created, total: students.length });
 }));
 
-/** GET /api/fees/ledger/:studentId — full fee ledger for a student
- *  (all bills across years, annual/monthly breakdown, previous dues, payment history) */
+/** GET /api/fees/ledger/:studentId — the student's running fee ledger:
+ *  month-wise tuition (auto-accrued) + heading charges, payments, dues. */
 router.get('/ledger/:studentId', requireRole('ADMIN'), asyncHandler(async (req, res) => {
   const studentId = intParam(req.params.studentId, 'studentId');
-  const student = await prisma.student.findUnique({
-    where: { id: studentId },
-    include: { class: { select: { name: true } } },
-  });
-  if (!student) throw new AppError(404, 'Student not found');
+  const invId = await ensureLedger(studentId);
+  if (!invId) throw new AppError(404, 'Student not found');
 
-  const invRows = await prisma.feeInvoice.findMany({
-    where: { studentId },
-    orderBy: { createdAt: 'asc' },
+  const student = await prisma.student.findUnique({ where: { id: studentId }, include: { class: { select: { name: true } } } });
+  const inv = await prisma.feeInvoice.findUnique({
+    where: { id: invId },
     include: { items: true, payments: { orderBy: { paidAt: 'asc' } } },
   });
+  if (!student || !inv) throw new AppError(404, 'Not found');
+  const t = invoiceTotals(inv);
+  const { year, month } = currentBS();
 
-  let billed = 0, paidTotal = 0;
-  const invoices = invRows.map((inv) => {
-    const t = invoiceTotals(inv);
-    billed += t.total; paidTotal += t.paid;
-    return {
-      id: inv.id, title: inv.title, sessionLabel: inv.sessionLabel,
-      createdAt: inv.createdAt, dueDate: inv.dueDate, status: inv.status,
-      items: inv.items.map((i) => ({ description: i.description, amount: i.amount })),
-      discount: inv.discount, fine: inv.fine, gross: t.gross, total: t.total, paid: t.paid, due: t.due,
-      payments: inv.payments.map((p) => ({ id: p.id, receiptNo: p.receiptNo, amount: p.amount, method: p.method, paidAt: p.paidAt })),
-    };
-  });
-
-  const payments = invRows
-    .flatMap((inv) => inv.payments.map((p) => ({ id: p.id, receiptNo: p.receiptNo, amount: p.amount, method: p.method, paidAt: p.paidAt, invoiceTitle: inv.title })))
-    .sort((a, b) => new Date(a.paidAt).getTime() - new Date(b.paidAt).getTime());
+  const monthly = inv.items.filter((i) => i.bsMonth)
+    .sort((a, b) => (a.bsYear! - b.bsYear!) || (a.bsMonth! - b.bsMonth!))
+    .map((i) => ({ id: i.id, label: `${BS_MONTHS[i.bsMonth! - 1]} ${i.bsYear}`, bsYear: i.bsYear, bsMonth: i.bsMonth, amount: i.amount, description: i.description }));
+  const headings = inv.items.filter((i) => !i.bsMonth)
+    .map((i) => ({ id: i.id, label: i.description, amount: i.amount, description: i.description }));
 
   res.json({
+    invoiceId: inv.id,
+    session: { year, month, monthName: BS_MONTHS[month - 1] },
     student: {
       id: student.id, name: student.name, iemis: student.iemis, className: student.class?.name || null,
       feeFree: student.feeFree, usesTransport: student.usesTransport, transportFee: student.transportFee,
     },
-    totals: { billed, paid: paidTotal, due: billed - paidTotal },
-    invoices,
-    payments,
+    monthly, headings,
+    discount: inv.discount, fine: inv.fine,
+    totals: { billed: t.total, paid: t.paid, due: t.due },
+    status: inv.status, dueDate: inv.dueDate,
+    payments: inv.payments.map((p) => ({ id: p.id, receiptNo: p.receiptNo, amount: p.amount, method: p.method, paidAt: p.paidAt })),
   });
+}));
+
+/** PUT /api/fees/ledger/:studentId — save the edited ledger (all items + Less/Fine) */
+router.put('/ledger/:studentId', requireRole('ADMIN'), asyncHandler(async (req, res) => {
+  const studentId = intParam(req.params.studentId, 'studentId');
+  const invId = await ensureLedger(studentId);
+  if (!invId) throw new AppError(404, 'Student not found');
+  const { monthly, headings, discount, fine } = req.body || {};
+
+  const items: any[] = [];
+  for (const m of (monthly || []))
+    items.push({ description: m.description || `${BS_MONTHS[(m.bsMonth || 1) - 1]} ${m.bsYear} – Tuition Fee`, amount: Number(m.amount || 0), bsYear: m.bsYear || null, bsMonth: m.bsMonth || null });
+  for (const h of (headings || []))
+    if (h.description) items.push({ description: h.description, amount: Number(h.amount || 0), bsYear: null, bsMonth: null });
+
+  await prisma.feeItem.deleteMany({ where: { invoiceId: invId } });
+  await prisma.feeInvoice.update({
+    where: { id: invId },
+    data: { discount: Number(discount || 0), fine: Number(fine || 0), items: { create: items } },
+  });
+  const inv = await prisma.feeInvoice.findUnique({ where: { id: invId }, include: { items: true, payments: true } });
+  const { total, paid } = invoiceTotals(inv!);
+  await prisma.feeInvoice.update({ where: { id: invId }, data: { status: statusFor(total, paid) } });
+  res.json({ ok: true });
 }));
 
 /** GET /api/fees/:id */

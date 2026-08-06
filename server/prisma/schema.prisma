@@ -303,6 +303,7 @@ model FeeInvoice {
   discount     Float         @default(0)
   fine         Float         @default(0)
   status       InvoiceStatus @default(PENDING)
+  isLedger     Boolean       @default(false)  // the student's running fee ledger
   createdAt    DateTime      @default(now())
 
   items    FeeItem[]
@@ -317,6 +318,8 @@ model FeeItem {
   categoryId Int?
   description String
   amount     Float
+  bsYear     Int?         // set for month-wise monthly-tuition items
+  bsMonth    Int?         // 1 = Baisakh .. 12 = Chaitra
 }
 
 enum PaymentMethod {

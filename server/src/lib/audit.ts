@@ -26,12 +26,15 @@ const HEAD_ORDER = ['Monthly Tuition Fee', 'Annual Charge', 'Computer Fee', 'Tra
 
 /** Compute the NFRS-style Income & Expenditure statement + Balance Sheet from live data. */
 export async function computeAudit(): Promise<AuditReport> {
-  const invoices = await prisma.feeInvoice.findMany({ include: { items: true, payments: true } });
+  const invoices = await prisma.feeInvoice.findMany({ where: { isLedger: true }, include: { items: true, payments: true } });
   const incomeByHead: Record<string, number> = {};
   for (const h of HEAD_ORDER) incomeByHead[h] = 0;
   let fines = 0, discounts = 0, collected = 0, billed = 0;
   for (const inv of invoices) {
-    for (const it of inv.items) incomeByHead[it.description] = (incomeByHead[it.description] || 0) + it.amount;
+    for (const it of inv.items) {
+      const head = it.bsMonth ? 'Monthly Tuition Fee' : it.description; // month-wise tuition → single heading
+      incomeByHead[head] = (incomeByHead[head] || 0) + it.amount;
+    }
     const gross = inv.items.reduce((a, i) => a + i.amount, 0);
     fines += inv.fine;
     discounts += inv.discount;
