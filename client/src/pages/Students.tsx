@@ -1,16 +1,17 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
+import { Pencil } from 'lucide-react';
 import api, { apiError } from '@/lib/api';
 import { useFetch } from '@/lib/useFetch';
 import { PageHeader, Loading } from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
-import { Input, Field } from '@/components/ui/input';
+import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Badge, statusVariant } from '@/components/ui/badge';
 import { DataTable, type Column } from '@/components/ui/table';
-import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { useToast } from '@/components/ui/toast';
-import { Link } from 'react-router-dom';
 import { SearchModeToggle, searchPlaceholder, type SearchMode } from '@/components/SearchModeToggle';
+import { StudentFormDialog } from '@/components/StudentFormDialog';
 
 export default function Students() {
   const toast = useToast();
@@ -25,34 +26,8 @@ export default function Students() {
   const { data, loading, refetch } = useFetch<any[]>(url, [classId, q, searchBy]);
   const { data: classes } = useFetch<any[]>('/classes');
 
-  const [open, setOpen] = useState(false);
-  const [form, setForm] = useState<any>({
-    name: '', admissionNo: '', iemis: '', rollNo: '', gender: 'MALE', dob: '', bloodGroup: '',
-    phone: '', email: '', address: '', classId: '', sectionId: '',
-    parentName: '', parentPhone: '', allergies: '', disabilities: '', usesTransport: false, transportFee: '', feeFree: false,
-  });
+  const [dialog, setDialog] = useState<{ open: boolean; id: number | null }>({ open: false, id: null });
 
-  const sections = (classes || []).find((c: any) => String(c.id) === String(form.classId))?.sections || [];
-
-  function openNew() {
-    setForm({
-      name: '', admissionNo: '', iemis: '', rollNo: '', gender: 'MALE', dob: '', bloodGroup: '',
-      phone: '', email: '', address: '', classId: '', sectionId: '',
-      parentName: '', parentPhone: '', allergies: '', disabilities: '', usesTransport: false, transportFee: '', feeFree: false,
-    });
-    setOpen(true);
-  }
-  async function save() {
-    try {
-      const payload = {
-        ...form,
-        classId: form.classId ? Number(form.classId) : undefined,
-        sectionId: form.sectionId ? Number(form.sectionId) : undefined,
-      };
-      await api.post('/students', payload);
-      toast('Student admitted'); setOpen(false); refetch();
-    } catch (e) { toast(apiError(e), 'error'); }
-  }
   async function remove(id: number) {
     if (!confirm('Delete?')) return;
     try { await api.delete(`/students/${id}`); toast('Deleted'); refetch(); } catch (e) { toast(apiError(e), 'error'); }
@@ -62,6 +37,9 @@ export default function Students() {
   }
 
   const columns: Column<any>[] = [
+    { key: 'edit', header: '', className: 'w-10', render: (r) => (
+      <Button size="icon" variant="ghost" className="h-8 w-8 text-brand" title="Edit student" onClick={() => setDialog({ open: true, id: r.id })}><Pencil className="size-4" /></Button>
+    ) },
     { key: 'rollNo', header: 'Roll', render: (r) => r.rollNo || '—' },
     { key: 'name', header: 'Name', render: (r) => (
       <span className="inline-flex items-center gap-1.5">
@@ -85,7 +63,7 @@ export default function Students() {
   ];
 
   return (<div>
-    <PageHeader title="Students" subtitle="Manage student records" actions={<Button onClick={openNew}>+ Admit Student</Button>} />
+    <PageHeader title="Students" subtitle="Manage student records" actions={<Button onClick={() => setDialog({ open: true, id: null })}>+ Admit Student</Button>} />
     <div className="flex gap-3 mb-4">
       <Select value={classId} onChange={(e) => setClassId(e.target.value)} className="w-48">
         <option value="">All Classes</option>
@@ -96,55 +74,6 @@ export default function Students() {
     </div>
     {loading ? <Loading /> : <DataTable columns={columns} rows={data || []} />}
 
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent title="Admit Student" footer={<><Button variant="secondary" onClick={() => setOpen(false)}>Cancel</Button><Button onClick={save}>Save</Button></>}>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Name"><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
-          <Field label="IEMIS ID"><Input value={form.iemis} onChange={(e) => setForm({ ...form, iemis: e.target.value })} /></Field>
-          <Field label="Class">
-            <Select value={form.classId} onChange={(e) => setForm({ ...form, classId: e.target.value, sectionId: '' })}>
-              <option value="">Select class</option>
-              {(classes || []).map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </Select>
-          </Field>
-          <Field label="Section">
-            <Select value={form.sectionId} onChange={(e) => setForm({ ...form, sectionId: e.target.value })}>
-              <option value="">Select section</option>
-              {sections.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </Select>
-          </Field>
-          <Field label="Roll No"><Input value={form.rollNo} onChange={(e) => setForm({ ...form, rollNo: e.target.value })} /></Field>
-          <Field label="Gender">
-            <Select value={form.gender} onChange={(e) => setForm({ ...form, gender: e.target.value })}>
-              <option value="MALE">Male</option>
-              <option value="FEMALE">Female</option>
-              <option value="OTHER">Other</option>
-            </Select>
-          </Field>
-          <Field label="Date of Birth"><Input type="date" value={form.dob} onChange={(e) => setForm({ ...form, dob: e.target.value })} /></Field>
-          <Field label="Blood Group"><Input value={form.bloodGroup} onChange={(e) => setForm({ ...form, bloodGroup: e.target.value })} /></Field>
-          <Field label="Phone"><Input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></Field>
-          <Field label="Email"><Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
-          <div className="col-span-2">
-            <Field label="Address"><Input value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} /></Field>
-          </div>
-          <Field label="Guardian Name"><Input value={form.parentName} onChange={(e) => setForm({ ...form, parentName: e.target.value })} /></Field>
-          <Field label="Guardian Phone"><Input value={form.parentPhone} onChange={(e) => setForm({ ...form, parentPhone: e.target.value })} /></Field>
-          <div className="col-span-2 mt-2 text-sm font-medium text-gray-500">Transport</div>
-          <label className="flex items-center gap-2 text-sm text-slate-700">
-            <input type="checkbox" checked={!!form.usesTransport} onChange={(e) => setForm({ ...form, usesTransport: e.target.checked })} className="size-4 accent-[#262081]" />
-            Uses transport service
-          </label>
-          <Field label="Transport Fee (optional override)"><Input type="number" value={form.transportFee} onChange={(e) => setForm({ ...form, transportFee: e.target.value })} disabled={!form.usesTransport} /></Field>
-          <label className="col-span-2 flex items-center gap-2 text-sm text-slate-700">
-            <input type="checkbox" checked={!!form.feeFree} onChange={(e) => setForm({ ...form, feeFree: e.target.checked })} className="size-4 accent-[#262081]" />
-            Free — waive monthly tuition fee
-          </label>
-          <div className="col-span-2 mt-2 text-sm font-medium text-gray-500">Medical</div>
-          <Field label="Allergies"><Input value={form.allergies} onChange={(e) => setForm({ ...form, allergies: e.target.value })} /></Field>
-          <Field label="Disabilities"><Input value={form.disabilities} onChange={(e) => setForm({ ...form, disabilities: e.target.value })} /></Field>
-        </div>
-      </DialogContent>
-    </Dialog>
+    <StudentFormDialog open={dialog.open} studentId={dialog.id} onClose={() => setDialog({ open: false, id: null })} onSaved={refetch} />
   </div>);
 }

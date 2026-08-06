@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import api, { apiError, downloadFile } from '@/lib/api';
+import api, { apiError } from '@/lib/api';
 import { useFetch } from '@/lib/useFetch';
 import { inr } from '@/lib/utils';
 import { formatBS } from '@/lib/nepaliDate';
@@ -14,6 +14,9 @@ import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { useToast } from '@/components/ui/toast';
 import { SearchModeToggle, searchPlaceholder, type SearchMode } from '@/components/SearchModeToggle';
+import { PdfPreviewDialog, type PdfPreview } from '@/components/PdfPreviewDialog';
+import { StudentFormDialog } from '@/components/StudentFormDialog';
+import { Pencil } from 'lucide-react';
 
 type Line = { key: string; label: string; amount: number | string; include: boolean; conditional?: string };
 
@@ -52,6 +55,10 @@ function InvoicesTab() {
   const { data: classes } = useFetch<any[]>('/classes');
 
   function reload() { refetch(); refetchSummary(); }
+
+  // PDF preview + student edit dialogs
+  const [preview, setPreview] = useState<PdfPreview | null>(null);
+  const [studentDialog, setStudentDialog] = useState<{ open: boolean; id: number | null }>({ open: false, id: null });
 
   // ---- list filters ----
   const [listClass, setListClass] = useState('');
@@ -124,7 +131,7 @@ function InvoicesTab() {
       });
       toast('Intimation created'); setOpenNew(false); reload();
       const id = res.data?.id;
-      if (printAfter && id) { try { await downloadFile(`/pdf/intimation/${id}`, `intimation-${id}.pdf`); } catch (e) { toast(apiError(e), 'error'); } }
+      if (printAfter && id) setPreview({ url: `/pdf/intimation/${id}`, filename: `intimation-${id}.pdf`, title: 'Fee Intimation Card' });
     } catch (e) { toast(apiError(e), 'error'); }
   }
 
@@ -153,9 +160,7 @@ function InvoicesTab() {
       const res = await api.post(`/fees/${payRow.id}/pay`, { amount: Number(pay.amount || 0), method: pay.method, reference: pay.reference });
       const { receiptNo, paymentId } = res.data || {};
       toast(`Payment recorded · ${receiptNo}`); setOpenPay(false); reload();
-      if (printReceipt && paymentId) {
-        try { await downloadFile(`/pdf/receipt/${paymentId}`, `${receiptNo}.pdf`); } catch (e) { toast(apiError(e), 'error'); }
-      }
+      if (printReceipt && paymentId) setPreview({ url: `/pdf/receipt/${paymentId}`, filename: `${receiptNo}.pdf`, title: 'Fee Receipt' });
     } catch (e) { toast(apiError(e), 'error'); }
   }
 
@@ -175,6 +180,9 @@ function InvoicesTab() {
 
   const money = (v: any) => (v ? inr(v) : '—');
   const columns: Column<any>[] = [
+    { key: 'edit', header: '', className: 'w-10', render: (r) => (
+      <Button size="icon" variant="ghost" className="h-8 w-8 text-brand" title="Edit student" onClick={() => setStudentDialog({ open: true, id: r.studentId })}><Pencil className="size-4" /></Button>
+    ) },
     { key: 'student', header: 'Student', render: (r) => (
       <div>
         <div className="flex items-center gap-1.5">
@@ -193,7 +201,7 @@ function InvoicesTab() {
     ) },
     { key: 'a', header: '', render: (r) => (
       <div className="flex flex-wrap gap-1">
-        <Button size="sm" variant="outline" onClick={() => downloadFile(`/pdf/intimation/${r.id}`, `intimation-${r.id}.pdf`)}>Intimation</Button>
+        <Button size="sm" variant="outline" onClick={() => setPreview({ url: `/pdf/intimation/${r.id}`, filename: `intimation-${r.id}.pdf`, title: 'Fee Intimation Card' })}>Intimation</Button>
         {r.status !== 'PAID' && <Button size="sm" variant="outline" onClick={() => startPay(r)}>Collect</Button>}
         <Button size="sm" variant="outline" onClick={() => openRecordFor(r)}>Record</Button>
         <Button size="sm" variant="ghost" className="text-red-600" onClick={() => remove(r.id)}>Delete</Button>
@@ -343,7 +351,7 @@ function InvoicesTab() {
         <DialogContent
           className="max-w-2xl"
           title="Payment Record"
-          footer={record?.payments?.length ? <Button variant="outline" onClick={() => downloadFile(`/pdf/receipt/invoice/${record.id}`, `receipt-${record.id}.pdf`)}>Download Full Receipt</Button> : undefined}
+          footer={record?.payments?.length ? <Button variant="outline" onClick={() => setPreview({ url: `/pdf/receipt/invoice/${record.id}`, filename: `receipt-${record.id}.pdf`, title: 'Fee Receipt' })}>Full Receipt</Button> : undefined}
         >
           {!record ? <Loading /> : (
             <div>
@@ -371,7 +379,7 @@ function InvoicesTab() {
                         <TD className="font-mono text-xs">{p.receiptNo}</TD>
                         <TD>{p.method}</TD>
                         <TD className="text-right">{inr(p.amount)}</TD>
-                        <TD><Button size="sm" variant="ghost" onClick={() => downloadFile(`/pdf/receipt/${p.id}`, `${p.receiptNo}.pdf`)}>Receipt</Button></TD>
+                        <TD><Button size="sm" variant="ghost" onClick={() => setPreview({ url: `/pdf/receipt/${p.id}`, filename: `${p.receiptNo}.pdf`, title: 'Fee Receipt' })}>Receipt</Button></TD>
                       </TR>
                     ))}
                   </TBody>
@@ -381,6 +389,14 @@ function InvoicesTab() {
           )}
         </DialogContent>
       </Dialog>
+
+      <PdfPreviewDialog preview={preview} onClose={() => setPreview(null)} />
+      <StudentFormDialog
+        open={studentDialog.open}
+        studentId={studentDialog.id}
+        onClose={() => setStudentDialog({ open: false, id: null })}
+        onSaved={() => { reload(); refetchStudents(); }}
+      />
     </div>
   );
 }

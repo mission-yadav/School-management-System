@@ -104,13 +104,33 @@ router.post(
   })
 );
 
-/** PUT /api/students/:id (ADMIN) */
+/** PUT /api/students/:id (ADMIN) — fully editable incl. parent/guardian */
 router.put(
   '/:id',
   requireRole('ADMIN'),
   asyncHandler(async (req, res) => {
     const id = intParam(req.params.id);
-    await prisma.student.update({ where: { id }, data: pickProfile(req.body || {}) });
+    const body = req.body || {};
+    const data = pickProfile(body);
+
+    // guardian/parent details
+    if (body.parentName !== undefined || body.parentPhone !== undefined || body.parentRelation !== undefined || body.parentEmail !== undefined) {
+      const student = await prisma.student.findUnique({ where: { id }, select: { parentId: true } });
+      const pdata = {
+        name: body.parentName ?? undefined,
+        phone: body.parentPhone ?? undefined,
+        relation: body.parentRelation ?? undefined,
+        email: body.parentEmail ?? undefined,
+      };
+      if (student?.parentId) {
+        await prisma.parent.update({ where: { id: student.parentId }, data: pdata });
+      } else if (body.parentName) {
+        const parent = await prisma.parent.create({ data: { name: body.parentName, phone: body.parentPhone || null, relation: body.parentRelation || 'Guardian', email: body.parentEmail || null } });
+        data.parentId = parent.id;
+      }
+    }
+
+    await prisma.student.update({ where: { id }, data });
     res.json({ ok: true });
   })
 );
