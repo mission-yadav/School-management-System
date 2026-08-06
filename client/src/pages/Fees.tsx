@@ -48,7 +48,7 @@ function InvoicesTab() {
   const toast = useToast();
   const { data, loading, refetch } = useFetch<any[]>('/fees');
   const { data: summary, refetch: refetchSummary } = useFetch<any>('/fees/summary');
-  const { data: students } = useFetch<any[]>('/students');
+  const { data: students, refetch: refetchStudents } = useFetch<any[]>('/students');
   const { data: classes } = useFetch<any[]>('/classes');
 
   function reload() { refetch(); refetchSummary(); }
@@ -81,17 +81,31 @@ function InvoicesTab() {
   });
   const [form, setForm] = useState<any>({ studentId: '', title: 'Term Fees', sessionLabel: '', dueDate: '', less: '' });
   const [lines, setLines] = useState<Line[]>([]);
+  const [free, setFree] = useState(false);
 
-  useEffect(() => {
-    if (!form.studentId) { setLines([]); return; }
-    api.get(`/fees/prefill?studentId=${form.studentId}`)
-      .then((r) => setLines(r.data.lines))
-      .catch((e) => toast(apiError(e), 'error'));
-  }, [form.studentId]);
+  async function loadPrefill(studentId: string) {
+    if (!studentId) { setLines([]); setFree(false); return; }
+    try {
+      const { data } = await api.get(`/fees/prefill?studentId=${studentId}`);
+      setLines(data.lines); setFree(!!data.feeFree);
+    } catch (e) { toast(apiError(e), 'error'); }
+  }
+  useEffect(() => { loadPrefill(form.studentId); /* eslint-disable-next-line */ }, [form.studentId]);
+
+  // toggle the "Free" (monthly fee waiver) flag on the selected student
+  async function toggleFree(checked: boolean) {
+    if (!form.studentId) return;
+    setFree(checked);
+    try {
+      await api.put(`/students/${form.studentId}`, { feeFree: checked });
+      await loadPrefill(form.studentId);
+      refetchStudents();
+    } catch (e) { toast(apiError(e), 'error'); }
+  }
 
   function startNew() {
     setForm({ studentId: '', title: 'Term Fees', sessionLabel: '', dueDate: '', less: '' });
-    setLines([]); setPickClass(''); setStuBy('name'); setStuSearch('');
+    setLines([]); setFree(false); setPickClass(''); setStuBy('name'); setStuSearch('');
     setOpenNew(true);
   }
   const setLine = (i: number, patch: Partial<Line>) => setLines((ls) => ls.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
@@ -161,7 +175,15 @@ function InvoicesTab() {
 
   const money = (v: any) => (v ? inr(v) : '—');
   const columns: Column<any>[] = [
-    { key: 'student', header: 'Student', render: (r) => (<div><div className="font-medium text-slate-800">{r.studentName}</div><div className="text-xs text-slate-500">{r.className} · IEMIS {r.iemis || '—'}</div></div>) },
+    { key: 'student', header: 'Student', render: (r) => (
+      <div>
+        <div className="flex items-center gap-1.5">
+          {r.feeFree && <span className="rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-bold text-green-700">FREE</span>}
+          <span className="font-medium text-slate-800">{r.studentName}</span>
+        </div>
+        <div className="text-xs text-slate-500">{r.className} · IEMIS {r.iemis || '—'}</div>
+      </div>
+    ) },
     { key: 'title', header: 'Fee', render: (r) => r.title },
     ...COMPONENTS.map((c) => ({ key: c.key, header: c.header, className: 'text-right whitespace-nowrap', render: (r: any) => money(r.components?.[c.key]) })),
     { key: 'total', header: 'Total', className: 'text-right font-medium', render: (r) => inr(r.total) },
@@ -225,6 +247,14 @@ function InvoicesTab() {
               <option value="">{`Select student (${filteredStudents.length})`}</option>
               {filteredStudents.map((s: any) => <option key={s.id} value={s.id}>{s.name} · IEMIS {s.iemis || '—'} · {s.className || '—'}</option>)}
             </Select>
+            {form.studentId && (
+              <label className="mt-2 flex items-center gap-2 text-sm text-slate-700">
+                <input type="checkbox" checked={free} onChange={(e) => toggleFree(e.target.checked)} className="size-4 accent-[#262081]" />
+                <span className="font-medium">Free</span>
+                <span className="text-slate-400">— waive monthly tuition fee</span>
+                {free && <span className="rounded bg-green-100 px-2 py-0.5 text-xs font-bold text-green-700">FREE</span>}
+              </label>
+            )}
           </div>
 
           <div className="grid grid-cols-3 gap-3">
@@ -245,6 +275,7 @@ function InvoicesTab() {
                       {l.label}
                       {l.conditional === 'transport' && <span className="ml-2 text-xs text-amber-600">(if service taken)</span>}
                       {l.conditional === 'exam' && <span className="ml-2 text-xs text-blue-600">(exam season)</span>}
+                      {(l as any).waived && <span className="ml-2 text-xs font-semibold text-green-600">(Free — waived)</span>}
                     </span>
                     <span className="text-slate-400">₹</span>
                     <Input type="number" className="w-28" value={l.amount} onChange={(e) => setLine(i, { amount: e.target.value })} disabled={!l.include} />

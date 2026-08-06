@@ -29,7 +29,7 @@ export default function Students() {
   const [form, setForm] = useState<any>({
     name: '', admissionNo: '', iemis: '', rollNo: '', gender: 'MALE', dob: '', bloodGroup: '',
     phone: '', email: '', address: '', classId: '', sectionId: '',
-    parentName: '', parentPhone: '', allergies: '', disabilities: '', usesTransport: false, transportFee: '',
+    parentName: '', parentPhone: '', allergies: '', disabilities: '', usesTransport: false, transportFee: '', feeFree: false,
   });
 
   const sections = (classes || []).find((c: any) => String(c.id) === String(form.classId))?.sections || [];
@@ -38,7 +38,7 @@ export default function Students() {
     setForm({
       name: '', admissionNo: '', iemis: '', rollNo: '', gender: 'MALE', dob: '', bloodGroup: '',
       phone: '', email: '', address: '', classId: '', sectionId: '',
-      parentName: '', parentPhone: '', allergies: '', disabilities: '', usesTransport: false, transportFee: '',
+      parentName: '', parentPhone: '', allergies: '', disabilities: '', usesTransport: false, transportFee: '', feeFree: false,
     });
     setOpen(true);
   }
@@ -63,7 +63,12 @@ export default function Students() {
 
   const columns: Column<any>[] = [
     { key: 'rollNo', header: 'Roll', render: (r) => r.rollNo || '—' },
-    { key: 'name', header: 'Name', render: (r) => <Link className="text-blue-600 hover:underline" to={`/students/${r.id}`}>{r.name}</Link> },
+    { key: 'name', header: 'Name', render: (r) => (
+      <span className="inline-flex items-center gap-1.5">
+        {r.feeFree && <span className="rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-bold text-green-700">FREE</span>}
+        <Link className="text-blue-600 hover:underline" to={`/students/${r.id}`}>{r.name}</Link>
+      </span>
+    ) },
     { key: 'iemis', header: 'IEMIS ID', render: (r) => r.iemis || '—' },
     { key: 'class', header: 'Class', render: (r) => [r.className, r.sectionName].filter(Boolean).join(' ') || '—' },
     { key: 'gender', header: 'Gender', render: (r) => r.gender || '—' },
@@ -131,6 +136,10 @@ export default function Students() {
             Uses transport service
           </label>
           <Field label="Transport Fee (optional override)"><Input type="number" value={form.transportFee} onChange={(e) => setForm({ ...form, transportFee: e.target.value })} disabled={!form.usesTransport} /></Field>
+          <label className="col-span-2 flex items-center gap-2 text-sm text-slate-700">
+            <input type="checkbox" checked={!!form.feeFree} onChange={(e) => setForm({ ...form, feeFree: e.target.checked })} className="size-4 accent-[#262081]" />
+            Free — waive monthly tuition fee
+          </label>
           <div className="col-span-2 mt-2 text-sm font-medium text-gray-500">Medical</div>
           <Field label="Allergies"><Input value={form.allergies} onChange={(e) => setForm({ ...form, allergies: e.target.value })} /></Field>
           <Field label="Disabilities"><Input value={form.disabilities} onChange={(e) => setForm({ ...form, disabilities: e.target.value })} /></Field>

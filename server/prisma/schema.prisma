@@ -91,6 +91,7 @@ model Student {
   vaccination    String?
   usesTransport  Boolean       @default(false)  // transportation service taken?
   transportFee   Float?        // per-student transport charge override (else class default)
+  feeFree        Boolean       @default(false)  // if true, monthly tuition fee is waived
   status         StudentStatus @default(ACTIVE)
   admissionDate  DateTime      @default(now())
   createdAt      DateTime      @default(now())

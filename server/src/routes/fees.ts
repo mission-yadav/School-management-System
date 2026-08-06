@@ -48,7 +48,7 @@ router.get('/', requireRole('ADMIN'), asyncHandler(async (req, res) => {
     const t = invoiceTotals(inv);
     return {
       id: inv.id, title: inv.title, studentId: inv.studentId,
-      studentName: inv.student.name, iemis: inv.student.iemis,
+      studentName: inv.student.name, iemis: inv.student.iemis, feeFree: inv.student.feeFree,
       classId: inv.student.class?.id || null, className: inv.student.class?.name || null,
       dueDate: inv.dueDate, discount: inv.discount, fine: inv.fine,
       components: componentsOf(inv.items),
@@ -131,14 +131,21 @@ router.get('/prefill', requireRole('ADMIN'), asyncHandler(async (req, res) => {
     monthlyTuition: s.monthlyTuition, annualCharge: s.annualCharge, computerFee: s.computerFee,
     transportFee: transportAmt, examFee: s.examFee, miscCharge: s.miscCharge,
   };
-  const lines = FEE_ORDER.map((f) => ({
-    key: f.key, label: f.label, amount: amounts[f.key],
-    include: f.conditional === 'transport' ? !!student.usesTransport : f.conditional === 'exam' ? false : true,
-    ...(f.conditional ? { conditional: f.conditional } : {}),
-  }));
+  const lines = FEE_ORDER.map((f) => {
+    const waived = f.key === 'monthlyTuition' && student.feeFree;
+    return {
+      key: f.key, label: f.label, amount: amounts[f.key],
+      include: waived ? false
+        : f.conditional === 'transport' ? !!student.usesTransport
+        : f.conditional === 'exam' ? false : true,
+      ...(f.conditional ? { conditional: f.conditional } : {}),
+      ...(waived ? { waived: true } : {}),
+    };
+  });
   res.json({
     studentId: student.id, studentName: student.name, className: student.class?.name || null,
-    usesTransport: student.usesTransport, hasStructure: !!student.class?.feeStructure, lines,
+    usesTransport: student.usesTransport, feeFree: student.feeFree,
+    hasStructure: !!student.class?.feeStructure, lines,
   });
 }));
 
@@ -158,7 +165,10 @@ router.post('/generate-class', requireRole('ADMIN'), asyncHandler(async (req, re
       transportFee: stu.transportFee ?? s.transportFee, examFee: s.examFee, miscCharge: s.miscCharge,
     };
     const items = FEE_ORDER
-      .filter((f) => (f.conditional === 'transport' ? stu.usesTransport : f.conditional === 'exam' ? includeExam : true))
+      .filter((f) => {
+        if (f.key === 'monthlyTuition' && stu.feeFree) return false; // Free: waive monthly fee
+        return f.conditional === 'transport' ? stu.usesTransport : f.conditional === 'exam' ? includeExam : true;
+      })
       .map((f) => ({ description: f.label, amount: amounts[f.key] }));
     const filtered = items.filter((i) => Number(i.amount) > 0);
     if (!filtered.length) continue;

@@ -20,6 +20,7 @@ function pickProfile(body: any) {
   if (body.sectionId !== undefined) data.sectionId = body.sectionId || null;
   if (body.status !== undefined) data.status = body.status;
   if (body.usesTransport !== undefined) data.usesTransport = !!body.usesTransport;
+  if (body.feeFree !== undefined) data.feeFree = !!body.feeFree;
   if (body.transportFee !== undefined)
     data.transportFee = body.transportFee === '' || body.transportFee == null ? null : Number(body.transportFee);
   return data;
@@ -47,7 +48,7 @@ router.get(
     res.json(
       students.map((s) => ({
         id: s.id, admissionNo: s.admissionNo, iemis: s.iemis, rollNo: s.rollNo, name: s.name,
-        gender: s.gender, phone: s.phone, status: s.status,
+        gender: s.gender, phone: s.phone, status: s.status, feeFree: s.feeFree,
         classId: s.classId, className: s.class?.name || null, sectionName: s.section?.name || null,
       }))
     );
