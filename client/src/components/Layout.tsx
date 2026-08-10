@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { Menu, LogOut, GraduationCap, ChevronDown } from 'lucide-react';
+import { Menu, LogOut, ChevronDown } from 'lucide-react';
 import { useAuth } from '@/context/auth';
 import { navForRole, type NavItem } from '@/lib/nav';
 import { cn } from '@/lib/utils';
@@ -74,7 +74,7 @@ export default function Layout() {
         )}
       >
         <div className="flex items-center gap-2.5 px-4 py-4">
-          <img src="/logo.jpg" alt="School logo" className="h-10 w-10 shrink-0 rounded-lg object-cover" />
+          <img src="/logo.png" alt="School logo" className="h-11 w-11 shrink-0 object-contain" />
           <span className="text-sm font-bold leading-tight">Janaki Secondary School</span>
         </div>
         <nav className="flex-1 overflow-y-auto px-3 pb-6">

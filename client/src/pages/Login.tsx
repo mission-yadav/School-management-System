@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { GraduationCap } from 'lucide-react';
 import { useAuth } from '@/context/auth';
 import { Button } from '@/components/ui/button';
 import { Input, Field } from '@/components/ui/input';
@@ -32,7 +31,7 @@ export default function Login() {
     <div className="flex min-h-screen items-center justify-center bg-brand p-4">
       <div className="w-full max-w-md rounded-2xl bg-white p-8 shadow-2xl">
         <div className="mb-6 text-center">
-          <img src="/logo.jpg" alt="Janaki Secondary School" className="mx-auto mb-3 h-20 w-20 rounded-2xl object-cover" />
+          <img src="/logo.png" alt="Janaki Secondary School" className="mx-auto mb-3 h-24 w-24 object-contain" />
           <h1 className="text-2xl font-bold text-slate-800">Janaki Secondary School</h1>
           <p className="text-sm text-slate-500">Birgunj-3, Aadarshtole</p>
         </div>

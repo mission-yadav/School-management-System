@@ -35,7 +35,7 @@ async function main() {
   // settings
   const settings: Record<string, any> = {
     schoolName: 'Janaki Secondary School', address: 'Birgunj-3, Aadarshtole',
-    phone: '', email: '', session: '2083', logoUrl: '/logo.jpg',
+    phone: '', email: '', session: '2083', logoUrl: '/logo.png',
     theme: '#262081', emailConfig: { host: '', user: '' }, smsConfig: { provider: '', apiKey: '' },
   };
   for (const [key, value] of Object.entries(settings))

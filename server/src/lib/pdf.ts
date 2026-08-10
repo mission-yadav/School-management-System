@@ -5,7 +5,7 @@ import path from 'path';
 
 const BRAND = '#262081';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-export const LOGO_PATH = path.join(__dirname, '..', '..', 'assets', 'logo.jpg');
+export const LOGO_PATH = path.join(__dirname, '..', '..', 'assets', 'logo.png');
 
 export interface SchoolInfo {
   name: string;
