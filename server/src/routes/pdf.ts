@@ -2,7 +2,7 @@ import { Router } from 'express';
 import prisma from '../prisma.js';
 import { authRequired } from '../middleware/auth.js';
 import { asyncHandler, AppError, intParam } from '../lib/http.js';
-import { streamPdf, letterhead, heading, signatureBlock, BRAND, type SchoolInfo } from '../lib/pdf.js';
+import { streamPdf, letterhead, heading, signatureBlock, BRAND, LOGO_PATH, type SchoolInfo } from '../lib/pdf.js';
 import { bsDate } from '../lib/nepaliDate.js';
 import { computeAudit, type Line } from '../lib/audit.js';
 import { currentBS, BS_MONTHS } from '../lib/ledger.js';
@@ -39,10 +39,10 @@ async function getSchool(): Promise<SchoolInfo> {
   const rows = await prisma.setting.findMany({ where: { key: { in: ['schoolName', 'address', 'phone', 'email'] } } });
   const map = Object.fromEntries(rows.map((r) => [r.key, r.value as any]));
   return {
-    name: (map.schoolName as string) || 'EduManage Public School',
-    address: (map.address as string) || '123 School Road, Bengaluru',
-    phone: (map.phone as string) || '+91 80 1234 5678',
-    email: (map.email as string) || 'info@school.com',
+    name: (map.schoolName as string) || 'Janaki Secondary School',
+    address: (map.address as string) || 'Birgunj-3, Aadarshtole',
+    phone: (map.phone as string) || '',
+    email: (map.email as string) || '',
   };
 }
 
@@ -100,7 +100,8 @@ function renderIdCard(res: any, school: SchoolInfo, s: any, cls: string, serial:
     const x = 60, y = 80, w = 360, h = 220;
     doc.roundedRect(x, y, w, h, 10).lineWidth(2).stroke(BRAND);
     doc.rect(x, y, w, 46).fill(BRAND);
-    doc.fillColor('white').fontSize(14).font('Helvetica-Bold').text(school.name, x + 12, y + 14, { width: w - 24 });
+    try { doc.image(LOGO_PATH, x + 8, y + 6, { fit: [34, 34] }); } catch { /* logo optional */ }
+    doc.fillColor('white').fontSize(13).font('Helvetica-Bold').text(school.name, x + 48, y + 15, { width: w - 56 });
     doc.fillColor('black').font('Helvetica').fontSize(11);
     const rows: [string, string][] = [
       ['Name', s.name], ['IEMIS ID', s.iemis || '—'], ['Class', cls],

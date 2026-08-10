@@ -34,9 +34,9 @@ async function main() {
 
   // settings
   const settings: Record<string, any> = {
-    schoolName: 'EduManage Public School', address: '123 School Road, Bengaluru 560001',
-    phone: '+91 80 1234 5678', email: 'info@edumanage.school', session: '2026-2027',
-    theme: '#262081', logoUrl: '', emailConfig: { host: '', user: '' }, smsConfig: { provider: '', apiKey: '' },
+    schoolName: 'Janaki Secondary School', address: 'Birgunj-3, Aadarshtole',
+    phone: '', email: '', session: '2083', logoUrl: '/logo.jpg',
+    theme: '#262081', emailConfig: { host: '', user: '' }, smsConfig: { provider: '', apiKey: '' },
   };
   for (const [key, value] of Object.entries(settings))
     await prisma.setting.upsert({ where: { key }, update: { value }, create: { key, value } });

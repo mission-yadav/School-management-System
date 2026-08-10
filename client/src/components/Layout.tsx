@@ -73,9 +73,9 @@ export default function Layout() {
           open ? 'translate-x-0' : '-translate-x-full'
         )}
       >
-        <div className="flex items-center gap-2 px-6 py-4 text-lg font-bold">
-          <span className="grid h-9 w-9 place-items-center rounded-lg bg-white/15"><GraduationCap className="size-5" /></span>
-          EduManage
+        <div className="flex items-center gap-2.5 px-4 py-4">
+          <img src="/logo.jpg" alt="School logo" className="h-10 w-10 shrink-0 rounded-lg object-cover" />
+          <span className="text-sm font-bold leading-tight">Janaki Secondary School</span>
         </div>
         <nav className="flex-1 overflow-y-auto px-3 pb-6">
           {groups.map((g) => (

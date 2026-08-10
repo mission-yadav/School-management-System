@@ -32,11 +32,9 @@ export default function Login() {
     <div className="flex min-h-screen items-center justify-center bg-brand p-4">
       <div className="w-full max-w-md rounded-2xl bg-white p-8 shadow-2xl">
         <div className="mb-6 text-center">
-          <div className="mx-auto mb-3 grid h-14 w-14 place-items-center rounded-2xl bg-brand text-white">
-            <GraduationCap className="size-7" />
-          </div>
-          <h1 className="text-2xl font-bold text-slate-800">EduManage</h1>
-          <p className="text-sm text-slate-500">School Management System</p>
+          <img src="/logo.jpg" alt="Janaki Secondary School" className="mx-auto mb-3 h-20 w-20 rounded-2xl object-cover" />
+          <h1 className="text-2xl font-bold text-slate-800">Janaki Secondary School</h1>
+          <p className="text-sm text-slate-500">Birgunj-3, Aadarshtole</p>
         </div>
 
         <form onSubmit={onSubmit} className="space-y-4">

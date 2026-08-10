@@ -1,7 +1,11 @@
 import PDFDocument from 'pdfkit';
 import type { Response } from 'express';
+import { fileURLToPath } from 'url';
+import path from 'path';
 
 const BRAND = '#262081';
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+export const LOGO_PATH = path.join(__dirname, '..', '..', 'assets', 'logo.jpg');
 
 export interface SchoolInfo {
   name: string;
@@ -20,12 +24,13 @@ export function streamPdf(res: Response, filename: string, draw: (doc: PDFKit.PD
   doc.end();
 }
 
-/** Common branded letterhead. Returns the y position to continue from. */
+/** Common branded letterhead with school logo. Returns the y position to continue from. */
 export function letterhead(doc: PDFKit.PDFDocument, school: SchoolInfo): number {
-  doc.rect(0, 0, doc.page.width, 90).fill(BRAND);
-  doc.fillColor('white').fontSize(22).font('Helvetica-Bold').text(school.name, 50, 28);
+  doc.rect(0, 0, doc.page.width, 96).fill(BRAND);
+  try { doc.image(LOGO_PATH, 40, 16, { fit: [64, 64] }); } catch { /* logo optional */ }
+  doc.fillColor('white').fontSize(21).font('Helvetica-Bold').text(school.name, 118, 26);
   doc.fontSize(9).font('Helvetica')
-    .text([school.address, school.phone && `Ph: ${school.phone}`, school.email].filter(Boolean).join('  |  '), 50, 58);
+    .text([school.address, school.phone && `Ph: ${school.phone}`, school.email].filter(Boolean).join('  |  '), 118, 56);
   doc.fillColor('black');
   return 120;
 }
