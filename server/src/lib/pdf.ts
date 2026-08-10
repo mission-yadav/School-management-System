@@ -93,13 +93,13 @@ export function heading(doc: PDFKit.PDFDocument, title: string, y: number) {
   return y + 40;
 }
 
-export function signatureBlock(doc: PDFKit.PDFDocument) {
+export function signatureBlock(doc: PDFKit.PDFDocument, role = 'Principal / Authorised Signatory') {
   const y = 720;
   doc.fontSize(11).font('Helvetica');
   doc.text('_____________________', 50, y);
   doc.text('Date', 50, y + 15);
   doc.text('_____________________', 380, y);
-  doc.text('Principal / Authorised Signatory', 380, y + 15);
+  doc.text(role, 380, y + 15);
 }
 
 export { BRAND };

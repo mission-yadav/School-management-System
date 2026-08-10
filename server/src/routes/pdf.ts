@@ -167,7 +167,7 @@ router.get('/receipt/invoice/:invoiceId', asyncHandler(async (req, res) => {
     doc.fillColor(total - settled > 0 ? 'red' : 'green').text('Balance Due', 60, dy).text((total - settled).toLocaleString('en-IN'), 50, dy, { align: 'right' });
     doc.fillColor('black').font('Helvetica').fontSize(10)
       .text(total - paid <= 0 ? 'Status: PAID IN FULL' : 'Status: PARTIALLY PAID', 60, dy + 26);
-    signatureBlock(doc);
+    signatureBlock(doc, 'Accountant');
   });
 }));
 
@@ -255,7 +255,7 @@ router.get('/receipt/:paymentId', asyncHandler(async (req, res) => {
     // signature pinned near the bottom of the quarter page
     doc.fillColor('black').font('Helvetica').fontSize(7)
       .text('___________________', R - 120, H - 26, { width: 120, align: 'center' })
-      .text('Authorised Signatory', R - 120, H - 16, { width: 120, align: 'center' });
+      .text('Accountant', R - 120, H - 16, { width: 120, align: 'center' });
   }, { size: QUARTER_A4, margin: 14 });
 }));
 
@@ -317,7 +317,7 @@ router.get('/intimation/:invoiceId', asyncHandler(async (req, res) => {
     doc.fillColor('black').font('Helvetica').fontSize(9)
       .text('Note: This is a fee intimation, not a receipt. Please clear the balance due by the due date. A receipt will be issued on payment.', 50, dy + 34, { width: doc.page.width - 100 });
     doc.fontSize(11);
-    signatureBlock(doc);
+    signatureBlock(doc, 'Accountant');
   });
 }));
 
