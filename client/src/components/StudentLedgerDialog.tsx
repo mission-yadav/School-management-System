@@ -110,7 +110,7 @@ export function StudentLedgerDialog({ open, studentId, onClose, onPreview }: {
               <div className="mb-2 text-sm font-semibold text-slate-600">Payment History</div>
               {d.payments.length === 0 ? <div className="text-sm text-slate-400">No payments recorded.</div> : (
                 <Table>
-                  <THead><TR className="hover:bg-transparent"><TH>Date</TH><TH>Receipt No</TH><TH>Mode</TH><TH className="text-right">Amount</TH><TH></TH></TR></THead>
+                  <THead><TR className="hover:bg-transparent"><TH>Date</TH><TH>Receipt No</TH><TH>Mode</TH><TH className="text-right">Amount</TH><TH className="text-right">Less</TH><TH></TH></TR></THead>
                   <TBody>
                     {d.payments.map((p: any) => (
                       <TR key={p.id}>
@@ -118,6 +118,7 @@ export function StudentLedgerDialog({ open, studentId, onClose, onPreview }: {
                         <TD className="font-mono text-xs">{p.receiptNo}</TD>
                         <TD>{p.method}</TD>
                         <TD className="text-right">{inr(p.amount)}</TD>
+                        <TD className="text-right text-red-600">{p.less ? inr(p.less) : '—'}</TD>
                         <TD><Button size="sm" variant="ghost" onClick={() => onPreview({ url: `/pdf/receipt/${p.id}`, filename: `${p.receiptNo}.pdf`, title: 'Fee Receipt' })}>Receipt</Button></TD>
                       </TR>
                     ))}

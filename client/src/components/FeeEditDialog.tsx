@@ -16,7 +16,6 @@ export function FeeEditDialog({ open, studentId, onClose, onSaved }: {
   const [loading, setLoading] = useState(false);
   const [monthly, setMonthly] = useState<any[]>([]);
   const [headings, setHeadings] = useState<any[]>([]);
-  const [less, setLess] = useState('');
   const [fine, setFine] = useState('');
   const [feeFree, setFeeFree] = useState(false);
   const [usesTransport, setUsesTransport] = useState(false);
@@ -28,7 +27,6 @@ export function FeeEditDialog({ open, studentId, onClose, onSaved }: {
     api.get(`/fees/ledger/${studentId}`).then(({ data }) => {
       setMonthly(data.monthly.map((m: any) => ({ ...m, amount: String(m.amount) })));
       setHeadings(data.headings.map((h: any) => ({ ...h, amount: String(h.amount) })));
-      setLess(data.discount ? String(data.discount) : '');
       setFine(data.fine ? String(data.fine) : '');
       setFeeFree(!!data.student.feeFree);
       setUsesTransport(!!data.student.usesTransport);
@@ -43,7 +41,7 @@ export function FeeEditDialog({ open, studentId, onClose, onSaved }: {
   const removeH = (i: number) => setHeadings((xs) => xs.filter((_, idx) => idx !== i));
 
   const gross = monthly.reduce((a, m) => a + Number(m.amount || 0), 0) + headings.reduce((a, h) => a + Number(h.amount || 0), 0);
-  const grand = gross + Number(fine || 0) - Number(less || 0);
+  const grand = gross + Number(fine || 0);
 
   async function save() {
     try {
@@ -51,7 +49,7 @@ export function FeeEditDialog({ open, studentId, onClose, onSaved }: {
       await api.put(`/fees/ledger/${studentId}`, {
         monthly: monthly.map((m) => ({ bsYear: m.bsYear, bsMonth: m.bsMonth, description: m.description, amount: Number(m.amount || 0) })),
         headings: headings.filter((h) => (h.description || h.label)).map((h) => ({ description: h.description || h.label, amount: Number(h.amount || 0) })),
-        discount: Number(less || 0), fine: Number(fine || 0),
+        discount: 0, fine: Number(fine || 0),
       });
       toast('Fees updated'); onSaved(); onClose();
     } catch (e) { toast(apiError(e), 'error'); }
@@ -98,8 +96,7 @@ export function FeeEditDialog({ open, studentId, onClose, onSaved }: {
             </div>
 
             <div className="grid grid-cols-2 gap-3">
-              <Field label="Less (deduction)"><Input type="number" value={less} onChange={(e) => setLess(e.target.value)} /></Field>
-              <Field label="Fine"><Input type="number" value={fine} onChange={(e) => setFine(e.target.value)} /></Field>
+              <Field label="Fine / Late Fee"><Input type="number" value={fine} onChange={(e) => setFine(e.target.value)} /></Field>
             </div>
 
             <div className="rounded-lg border border-slate-200 p-3">

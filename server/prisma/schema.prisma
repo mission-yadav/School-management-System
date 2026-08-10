@@ -334,6 +334,7 @@ model Payment {
   invoice      FeeInvoice    @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   invoiceId    Int
   amount       Float
+  less         Float         @default(0)  // concession given at collection time
   method       PaymentMethod @default(CASH)
   reference    String?
   receiptNo    String        @unique

@@ -129,6 +129,7 @@ router.get('/receipt/invoice/:invoiceId', asyncHandler(async (req, res) => {
   const gross = inv.items.reduce((a, i) => a + i.amount, 0);
   const total = gross + inv.fine - inv.discount;
   const paid = inv.payments.reduce((a, p) => a + p.amount, 0);
+  const settled = paid + inv.payments.reduce((a, p) => a + (p.less || 0), 0); // cash + concessions
 
   streamPdf(res, `receipt-${inv.student.iemis || inv.student.admissionNo}.pdf`, (doc) => {
     let y = letterhead(doc, school);
@@ -160,7 +161,8 @@ router.get('/receipt/invoice/:invoiceId', asyncHandler(async (req, res) => {
     doc.font('Helvetica-Bold');
     doc.text('Invoice Total', 60, dy).text(total.toLocaleString('en-IN'), 50, dy, { align: 'right' }); dy += 20;
     doc.fillColor('green').text('Total Paid', 60, dy).text(paid.toLocaleString('en-IN'), 50, dy, { align: 'right' }); dy += 20;
-    doc.fillColor(total - paid > 0 ? 'red' : 'green').text('Balance Due', 60, dy).text((total - paid).toLocaleString('en-IN'), 50, dy, { align: 'right' });
+    if (settled - paid > 0) { doc.fillColor('#b91c1c').text('Concession (Less)', 60, dy).text((settled - paid).toLocaleString('en-IN'), 50, dy, { align: 'right' }); dy += 20; }
+    doc.fillColor(total - settled > 0 ? 'red' : 'green').text('Balance Due', 60, dy).text((total - settled).toLocaleString('en-IN'), 50, dy, { align: 'right' });
     doc.fillColor('black').font('Helvetica').fontSize(10)
       .text(total - paid <= 0 ? 'Status: PAID IN FULL' : 'Status: PARTIALLY PAID', 60, dy + 26);
     signatureBlock(doc);
@@ -178,8 +180,11 @@ router.get('/receipt/:paymentId', asyncHandler(async (req, res) => {
   const school = await getSchool();
   const inv = payment.invoice;
   const total = inv.items.reduce((a, i) => a + i.amount, 0) + inv.fine - inv.discount;
-  // cumulative amount paid up to and including this payment (so the receipt reflects the balance at that time)
-  const paidToDate = inv.payments.filter((p) => p.id <= payment.id).reduce((a, p) => a + p.amount, 0);
+  // cumulative amounts up to and including this payment (so the receipt reflects the balance at that time)
+  const upto = inv.payments.filter((p) => p.id <= payment.id);
+  const paidToDate = upto.reduce((a, p) => a + p.amount, 0);
+  const concessionToDate = upto.reduce((a, p) => a + (p.less || 0), 0);
+  const settledToDate = paidToDate + concessionToDate;
 
   streamPdf(res, `${payment.receiptNo}.pdf`, (doc) => {
     let y = letterhead(doc, school);
@@ -215,8 +220,9 @@ router.get('/receipt/:paymentId', asyncHandler(async (req, res) => {
     doc.font('Helvetica-Bold');
     doc.text('Invoice Total', 60, dy).text(total.toLocaleString('en-IN'), 50, dy, { align: 'right' }); dy += 20;
     doc.fillColor('green').text('Amount Paid Now', 60, dy).text(payment.amount.toLocaleString('en-IN'), 50, dy, { align: 'right' }); dy += 20;
+    if (payment.less > 0) { doc.fillColor('#b91c1c').text('Less (concession)', 60, dy).text(payment.less.toLocaleString('en-IN'), 50, dy, { align: 'right' }); dy += 20; }
     doc.fillColor('black').text('Paid To Date', 60, dy).text(paidToDate.toLocaleString('en-IN'), 50, dy, { align: 'right' }); dy += 20;
-    doc.fillColor(total - paidToDate > 0 ? 'red' : 'green').text('Balance Due', 60, dy).text((total - paidToDate).toLocaleString('en-IN'), 50, dy, { align: 'right' });
+    doc.fillColor(total - settledToDate > 0 ? 'red' : 'green').text('Balance Due', 60, dy).text((total - settledToDate).toLocaleString('en-IN'), 50, dy, { align: 'right' });
     doc.fillColor('black').font('Helvetica').fontSize(9).text(`Payment mode: ${payment.method}`, 60, dy + 30);
     signatureBlock(doc);
   });
@@ -234,6 +240,7 @@ router.get('/intimation/:invoiceId', asyncHandler(async (req, res) => {
   const gross = inv.items.reduce((a, i) => a + i.amount, 0);
   const total = gross + inv.fine - inv.discount;
   const paid = inv.payments.reduce((a, p) => a + p.amount, 0);
+  const settled = paid + inv.payments.reduce((a, p) => a + (p.less || 0), 0); // cash + concessions
 
   streamPdf(res, `intimation-${inv.student.iemis || inv.student.admissionNo}.pdf`, (doc) => {
     let y = letterhead(doc, school);
@@ -273,9 +280,9 @@ router.get('/intimation/:invoiceId', asyncHandler(async (req, res) => {
     doc.fillColor(BRAND).font('Helvetica-Bold').fontSize(12)
       .text('Grand Total', 60, dy + 7).text(total.toLocaleString('en-IN'), 50, dy + 7, { align: 'right' });
     doc.fillColor('black').font('Helvetica').fontSize(11); dy += 40;
-    doc.fillColor('green').text('Paid', 60, dy).text(paid.toLocaleString('en-IN'), 50, dy, { align: 'right' }); dy += 18;
-    doc.fillColor(total - paid > 0 ? 'red' : 'green').font('Helvetica-Bold')
-      .text('Balance Due', 60, dy).text((total - paid).toLocaleString('en-IN'), 50, dy, { align: 'right' });
+    doc.fillColor('green').text('Paid / Adjusted', 60, dy).text(settled.toLocaleString('en-IN'), 50, dy, { align: 'right' }); dy += 18;
+    doc.fillColor(total - settled > 0 ? 'red' : 'green').font('Helvetica-Bold')
+      .text('Balance Due', 60, dy).text((total - settled).toLocaleString('en-IN'), 50, dy, { align: 'right' });
     doc.fillColor('black').font('Helvetica').fontSize(9)
       .text('Note: This is a fee intimation, not a receipt. Please clear the balance due by the due date. A receipt will be issued on payment.', 50, dy + 34, { width: doc.page.width - 100 });
     doc.fontSize(11);

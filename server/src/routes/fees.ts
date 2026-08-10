@@ -7,11 +7,13 @@ import { ensureLedger, ensureAllLedgers, currentBS, BS_MONTHS } from '../lib/led
 const router = Router();
 router.use(authRequired);
 
-function invoiceTotals(inv: { items: { amount: number }[]; payments: { amount: number }[]; fine: number; discount: number }) {
+function invoiceTotals(inv: { items: { amount: number }[]; payments: { amount: number; less?: number }[]; fine: number; discount: number }) {
   const gross = inv.items.reduce((a, i) => a + i.amount, 0);
   const total = gross + inv.fine - inv.discount;
-  const paid = inv.payments.reduce((a, p) => a + p.amount, 0);
-  return { gross, total, paid, due: total - paid };
+  const paid = inv.payments.reduce((a, p) => a + p.amount, 0);            // actual cash received
+  const concession = inv.payments.reduce((a, p) => a + (p.less || 0), 0); // "less" given at collection
+  const settled = paid + concession;                                     // total reduction of balance
+  return { gross, total, paid, concession, settled, due: total - settled };
 }
 function statusFor(total: number, paid: number): 'PENDING' | 'PARTIAL' | 'PAID' {
   if (paid <= 0) return 'PENDING';
@@ -222,9 +224,9 @@ router.get('/ledger/:studentId', requireRole('ADMIN'), asyncHandler(async (req, 
     },
     monthly, headings,
     discount: inv.discount, fine: inv.fine,
-    totals: { billed: t.total, paid: t.paid, due: t.due },
+    totals: { billed: t.total, paid: t.paid, concession: t.concession, due: t.due },
     status: inv.status, dueDate: inv.dueDate,
-    payments: inv.payments.map((p) => ({ id: p.id, receiptNo: p.receiptNo, amount: p.amount, method: p.method, paidAt: p.paidAt })),
+    payments: inv.payments.map((p) => ({ id: p.id, receiptNo: p.receiptNo, amount: p.amount, less: p.less, method: p.method, paidAt: p.paidAt })),
   });
 }));
 
@@ -247,8 +249,8 @@ router.put('/ledger/:studentId', requireRole('ADMIN'), asyncHandler(async (req, 
     data: { discount: Number(discount || 0), fine: Number(fine || 0), items: { create: items } },
   });
   const inv = await prisma.feeInvoice.findUnique({ where: { id: invId }, include: { items: true, payments: true } });
-  const { total, paid } = invoiceTotals(inv!);
-  await prisma.feeInvoice.update({ where: { id: invId }, data: { status: statusFor(total, paid) } });
+  const { total, settled } = invoiceTotals(inv!);
+  await prisma.feeInvoice.update({ where: { id: invId }, data: { status: statusFor(total, settled) } });
   res.json({ ok: true });
 }));
 
@@ -281,19 +283,20 @@ router.post('/', requireRole('ADMIN'), asyncHandler(async (req, res) => {
 /** POST /api/fees/:id/pay (ADMIN) — record a payment, recompute status */
 router.post('/:id/pay', requireRole('ADMIN'), asyncHandler(async (req, res) => {
   const id = intParam(req.params.id);
-  const { amount, method, reference } = req.body || {};
+  const { amount, method, reference, less } = req.body || {};
   const inv = await prisma.feeInvoice.findUnique({ where: { id }, include: { items: true, payments: true } });
   if (!inv) throw new AppError(404, 'Invoice not found');
-  const pay = Number(amount);
-  if (!pay || pay <= 0) throw new AppError(400, 'Valid amount required');
+  const pay = Number(amount || 0);
+  const lessAmt = Number(less || 0);
+  if ((!pay || pay <= 0) && lessAmt <= 0) throw new AppError(400, 'Enter a payment amount or a concession');
 
   const receiptNo = 'RCPT' + Date.now().toString().slice(-8) + Math.floor(Math.random() * 90 + 10);
-  const { total, paid } = invoiceTotals(inv);
-  const newStatus = statusFor(total, paid + pay);
+  const { total, settled } = invoiceTotals(inv);
+  const newStatus = statusFor(total, settled + pay + lessAmt);
 
   const [payment] = await prisma.$transaction([
     prisma.payment.create({
-      data: { invoiceId: id, amount: pay, method: method || 'CASH', reference: reference || null, receiptNo, receivedById: req.user!.id },
+      data: { invoiceId: id, amount: pay, less: lessAmt, method: method || 'CASH', reference: reference || null, receiptNo, receivedById: req.user!.id },
     }),
     prisma.feeInvoice.update({ where: { id }, data: { status: newStatus } }),
   ]);
@@ -321,8 +324,8 @@ router.put('/:id', requireRole('ADMIN'), asyncHandler(async (req, res) => {
   }
 
   const inv = await prisma.feeInvoice.update({ where: { id }, data, include: { items: true, payments: true } });
-  const { total, paid } = invoiceTotals(inv);
-  await prisma.feeInvoice.update({ where: { id }, data: { status: statusFor(total, paid) } });
+  const { total, settled } = invoiceTotals(inv);
+  await prisma.feeInvoice.update({ where: { id }, data: { status: statusFor(total, settled) } });
   res.json({ ok: true });
 }));
 

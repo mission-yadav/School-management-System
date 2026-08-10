@@ -159,12 +159,12 @@ function InvoicesTab() {
   // ---- payment dialog ----
   const [openPay, setOpenPay] = useState(false);
   const [payRow, setPayRow] = useState<any>(null);
-  const [pay, setPay] = useState<any>({ amount: '', method: 'CASH', reference: '' });
-  function startPay(row: any) { setPayRow(row); setPay({ amount: String(row.due ?? ''), method: 'CASH', reference: '' }); setOpenPay(true); }
+  const [pay, setPay] = useState<any>({ amount: '', less: '', method: 'CASH', reference: '' });
+  function startPay(row: any) { setPayRow(row); setPay({ amount: String(row.due ?? ''), less: '', method: 'CASH', reference: '' }); setOpenPay(true); }
   async function collect(printReceipt: boolean) {
     if (!payRow) return;
     try {
-      const res = await api.post(`/fees/${payRow.id}/pay`, { amount: Number(pay.amount || 0), method: pay.method, reference: pay.reference });
+      const res = await api.post(`/fees/${payRow.id}/pay`, { amount: Number(pay.amount || 0), less: Number(pay.less || 0), method: pay.method, reference: pay.reference });
       const { receiptNo, paymentId } = res.data || {};
       toast(`Payment recorded · ${receiptNo}`); setOpenPay(false); reload();
       if (printReceipt && paymentId) setPreview({ url: `/pdf/receipt/${paymentId}`, filename: `${receiptNo}.pdf`, title: 'Fee Receipt' });
@@ -237,14 +237,19 @@ function InvoicesTab() {
         <DialogContent title="Collect Payment" footer={<><Button variant="secondary" onClick={() => setOpenPay(false)}>Cancel</Button><Button variant="outline" onClick={() => collect(false)}>Collect</Button><Button onClick={() => collect(true)}>Collect & Receipt</Button></>}>
           {payRow && (
             <div className="grid grid-cols-2 gap-3">
-              <div className="col-span-2 text-sm text-slate-500">{payRow.studentName} — {payRow.title} (Due {inr(payRow.due)})</div>
-              <Field label="Amount"><Input type="number" value={pay.amount} onChange={(e) => setPay({ ...pay, amount: e.target.value })} /></Field>
+              <div className="col-span-2 text-sm text-slate-500">{payRow.studentName} — Due {inr(payRow.due)}</div>
+              <Field label="Amount Received"><Input type="number" value={pay.amount} onChange={(e) => setPay({ ...pay, amount: e.target.value })} /></Field>
+              <Field label="Less (concession)"><Input type="number" value={pay.less} onChange={(e) => setPay({ ...pay, less: e.target.value })} /></Field>
               <Field label="Method">
                 <Select value={pay.method} onChange={(e) => setPay({ ...pay, method: e.target.value })}>
                   <option value="CASH">Cash</option><option value="CARD">Card</option><option value="UPI">UPI</option><option value="BANK_TRANSFER">Bank Transfer</option>
                 </Select>
               </Field>
-              <div className="col-span-2"><Field label="Reference"><Input value={pay.reference} onChange={(e) => setPay({ ...pay, reference: e.target.value })} /></Field></div>
+              <Field label="Reference"><Input value={pay.reference} onChange={(e) => setPay({ ...pay, reference: e.target.value })} /></Field>
+              <div className="col-span-2 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                Balance cleared this time: <b>{inr(Number(pay.amount || 0) + Number(pay.less || 0))}</b>
+                <span className="text-slate-400"> ({inr(pay.amount || 0)} paid + {inr(pay.less || 0)} less)</span>
+              </div>
             </div>
           )}
         </DialogContent>
