@@ -5,6 +5,26 @@ import { asyncHandler, AppError, intParam } from '../lib/http.js';
 import { streamPdf, letterhead, heading, signatureBlock, BRAND, type SchoolInfo } from '../lib/pdf.js';
 import { bsDate } from '../lib/nepaliDate.js';
 import { computeAudit, type Line } from '../lib/audit.js';
+import { currentBS } from '../lib/ledger.js';
+
+/** Build the printable particulars: previous months' tuition collapsed into "Previous Dues",
+ *  then the current month's tuition, then the other (heading) charges in canonical order. */
+function particularLines(items: { description: string; amount: number; bsMonth?: number | null; bsYear?: number | null }[]) {
+  const { year, month } = currentBS();
+  const prevDues = items
+    .filter((i) => i.bsMonth && (i.bsYear! < year || (i.bsYear === year && i.bsMonth! < month)))
+    .reduce((a, i) => a + i.amount, 0);
+  const currentTuition = items.filter((i) => i.bsMonth === month && i.bsYear === year).sort((a, b) => a.bsMonth! - b.bsMonth!);
+  const ORDER = ['Annual Charge', 'Computer Fee', 'Transportation Charge', 'Exam Fee', 'Miscellaneous Charges'];
+  const rank = (d: string) => { const i = ORDER.indexOf(d); return i < 0 ? 90 : i; };
+  const headings = items.filter((i) => !i.bsMonth).sort((a, b) => rank(a.description) - rank(b.description));
+
+  const lines: { label: string; amount: number }[] = [];
+  if (prevDues > 0) lines.push({ label: 'Previous Dues', amount: prevDues });
+  for (const m of currentTuition) lines.push({ label: m.description, amount: m.amount });
+  for (const h of headings) lines.push({ label: h.description, amount: h.amount });
+  return lines;
+}
 
 const router = Router();
 router.use(authRequired);
@@ -176,8 +196,8 @@ router.get('/receipt/:paymentId', asyncHandler(async (req, res) => {
       .text('Description', 60, dy + 6).text('Amount (Rs.)', 50, dy + 6, { align: 'right' });
     doc.fillColor('black').font('Helvetica');
     dy += 30;
-    for (const it of inv.items) {
-      doc.text(it.description, 60, dy).text(it.amount.toLocaleString('en-IN'), 50, dy, { align: 'right' });
+    for (const it of particularLines(inv.items)) {
+      doc.text(it.label, 60, dy).text(it.amount.toLocaleString('en-IN'), 50, dy, { align: 'right' });
       dy += 20;
     }
     if (inv.discount) { doc.text('Less', 60, dy).text(`- ${inv.discount.toLocaleString('en-IN')}`, 50, dy, { align: 'right' }); dy += 20; }
@@ -231,13 +251,13 @@ router.get('/intimation/:invoiceId', asyncHandler(async (req, res) => {
       .text('Particulars', 60, dy + 6).text('Amount (Rs.)', 50, dy + 6, { align: 'right' });
     doc.fillColor('black').font('Helvetica');
     dy += 30;
-    const ORDER = ['Annual Charge', 'Computer Fee', 'Transportation Charge', 'Exam Fee', 'Miscellaneous Charges'];
-    const rank = (it: any) => it.bsMonth ? it.bsMonth : 100 + (ORDER.indexOf(it.description) < 0 ? 90 : ORDER.indexOf(it.description));
-    const billItems = [...inv.items].sort((a, b) => rank(a) - rank(b));
-    for (const it of billItems) {
-      doc.text(it.description, 60, dy).text(it.amount.toLocaleString('en-IN'), 50, dy, { align: 'right' });
+    for (const it of particularLines(inv.items)) {
+      const emphasize = it.label === 'Previous Dues';
+      doc.font(emphasize ? 'Helvetica-Bold' : 'Helvetica');
+      doc.text(it.label, 60, dy).text(it.amount.toLocaleString('en-IN'), 50, dy, { align: 'right' });
       dy += 20;
     }
+    doc.font('Helvetica');
     doc.moveTo(50, dy).lineTo(doc.page.width - 50, dy).stroke('#ccc'); dy += 8;
     doc.text('Sub Total', 60, dy).text(gross.toLocaleString('en-IN'), 50, dy, { align: 'right' }); dy += 18;
     if (inv.fine) { doc.text('Fine', 60, dy).text(inv.fine.toLocaleString('en-IN'), 50, dy, { align: 'right' }); dy += 18; }
