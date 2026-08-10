@@ -7,14 +7,19 @@ import { Input, Field } from '@/components/ui/input';
 import { Loading } from '@/components/PageHeader';
 import { useToast } from '@/components/ui/toast';
 
-/** Edit the student's running fee ledger: month-wise tuition + heading charges (all editable),
- *  Less/Fine, and the Free & Transport toggles. */
+/** Edit the student's running fee ledger: previous dues (carried forward, warning-gated),
+ *  month-wise tuition + heading charges, Fine, and the Free & Transport toggles. */
 export function FeeEditDialog({ open, studentId, onClose, onSaved }: {
   open: boolean; invoiceId?: number | null; studentId: number | null; onClose: () => void; onSaved: () => void;
 }) {
   const toast = useToast();
   const [loading, setLoading] = useState(false);
-  const [monthly, setMonthly] = useState<any[]>([]);
+  const [session, setSession] = useState<{ year: number; month: number }>({ year: 0, month: 0 });
+  const [monthly, setMonthly] = useState<any[]>([]);      // current + future months
+  const [prevItems, setPrevItems] = useState<any[]>([]);  // original prior-month items (before current)
+  const [prevDues, setPrevDues] = useState('');           // editable consolidated previous dues
+  const [prevUnlocked, setPrevUnlocked] = useState(false);
+  const [warnOpen, setWarnOpen] = useState(false);
   const [headings, setHeadings] = useState<any[]>([]);
   const [fine, setFine] = useState('');
   const [feeFree, setFeeFree] = useState(false);
@@ -24,8 +29,16 @@ export function FeeEditDialog({ open, studentId, onClose, onSaved }: {
   useEffect(() => {
     if (!open || !studentId) return;
     setLoading(true);
+    setPrevUnlocked(false); setWarnOpen(false);
     api.get(`/fees/ledger/${studentId}`).then(({ data }) => {
-      setMonthly(data.monthly.map((m: any) => ({ ...m, amount: String(m.amount) })));
+      const { year, month } = data.session;
+      setSession({ year, month });
+      const all = data.monthly.map((m: any) => ({ ...m, amount: String(m.amount) }));
+      const isPrev = (m: any) => m.bsYear < year || (m.bsYear === year && m.bsMonth < month);
+      const prev = all.filter(isPrev);
+      setPrevItems(prev);
+      setPrevDues(String(prev.reduce((a: number, m: any) => a + Number(m.amount || 0), 0)));
+      setMonthly(all.filter((m: any) => !isPrev(m)));
       setHeadings(data.headings.map((h: any) => ({ ...h, amount: String(h.amount) })));
       setFine(data.fine ? String(data.fine) : '');
       setFeeFree(!!data.student.feeFree);
@@ -40,14 +53,36 @@ export function FeeEditDialog({ open, studentId, onClose, onSaved }: {
   const addH = () => setHeadings((xs) => [...xs, { label: '', description: '', amount: '' }]);
   const removeH = (i: number) => setHeadings((xs) => xs.filter((_, idx) => idx !== i));
 
-  const gross = monthly.reduce((a, m) => a + Number(m.amount || 0), 0) + headings.reduce((a, h) => a + Number(h.amount || 0), 0);
+  const prevLabel = prevItems.length ? `Up to ${prevItems[prevItems.length - 1].label}` : 'Opening balance';
+  const gross = Number(prevDues || 0)
+    + monthly.reduce((a, m) => a + Number(m.amount || 0), 0)
+    + headings.reduce((a, h) => a + Number(h.amount || 0), 0);
   const grand = gross + Number(fine || 0);
+
+  function buildPrevPayload() {
+    const origSum = prevItems.reduce((a, m) => a + Number(m.amount || 0), 0);
+    const val = Number(prevDues || 0);
+    const edited = Math.abs(val - origSum) > 0.001;
+    if (!edited) {
+      return prevItems.map((m) => ({ bsYear: m.bsYear, bsMonth: m.bsMonth, description: m.description, amount: Number(m.amount || 0) }));
+    }
+    if (val === 0) return []; // cleared
+    // Consolidate prior months into a single "Previous Dues" line at the latest prior month.
+    const last = prevItems[prevItems.length - 1];
+    const bsMonth = last ? last.bsMonth : (session.month === 1 ? 12 : session.month - 1);
+    const bsYear = last ? last.bsYear : (session.month === 1 ? session.year - 1 : session.year);
+    return [{ bsYear, bsMonth, description: 'Previous Dues', amount: val }];
+  }
 
   async function save() {
     try {
       await api.put(`/students/${studentId}`, { feeFree, usesTransport, transportFee: transportFee === '' ? null : Number(transportFee) });
+      const monthlyPayload = [
+        ...buildPrevPayload(),
+        ...monthly.map((m) => ({ bsYear: m.bsYear, bsMonth: m.bsMonth, description: m.description, amount: Number(m.amount || 0) })),
+      ];
       await api.put(`/fees/ledger/${studentId}`, {
-        monthly: monthly.map((m) => ({ bsYear: m.bsYear, bsMonth: m.bsMonth, description: m.description, amount: Number(m.amount || 0) })),
+        monthly: monthlyPayload,
         headings: headings.filter((h) => (h.description || h.label)).map((h) => ({ description: h.description || h.label, amount: Number(h.amount || 0) })),
         discount: 0, fine: Number(fine || 0),
       });
@@ -56,72 +91,111 @@ export function FeeEditDialog({ open, studentId, onClose, onSaved }: {
   }
 
   return (
-    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent
-        className="max-w-2xl"
-        title="Edit Fees"
-        footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button onClick={save}>Save Changes</Button></>}
-      >
-        {loading ? <Loading label="Loading fees…" /> : (
-          <div className="space-y-4">
-            {/* month-wise tuition */}
-            <div>
-              <div className="mb-2 text-sm font-medium text-slate-600">Monthly Tuition (auto-added each month)</div>
-              <div className="grid grid-cols-2 gap-2">
-                {monthly.map((m, i) => (
-                  <div key={m.id ?? i} className="flex items-center gap-2">
-                    <span className="w-28 shrink-0 text-sm text-slate-600">{m.label}</span>
-                    <Input type="number" value={m.amount} onChange={(e) => setM(i, e.target.value)} />
-                  </div>
-                ))}
-                {monthly.length === 0 && <div className="text-sm text-slate-400">No months yet.</div>}
+    <>
+      <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+        <DialogContent
+          className="max-w-2xl"
+          title="Edit Fees"
+          footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button onClick={save}>Save Changes</Button></>}
+        >
+          {loading ? <Loading label="Loading fees…" /> : (
+            <div className="space-y-4">
+              {/* previous dues — carried forward, editing gated behind a warning */}
+              <div className="rounded-lg border border-amber-200 bg-amber-50/50 p-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <div className="text-sm font-medium text-slate-600">Previous Dues <span className="text-slate-400">(carried forward)</span></div>
+                  {prevUnlocked
+                    ? <span className="text-xs font-medium text-amber-600">Editing enabled</span>
+                    : <Button size="sm" variant="outline" onClick={() => setWarnOpen(true)}>Edit</Button>}
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="w-28 shrink-0 text-sm text-slate-600">{prevLabel}</span>
+                  <Input type="number" value={prevDues} onChange={(e) => setPrevDues(e.target.value)} disabled={!prevUnlocked} />
+                </div>
+                {prevUnlocked && (
+                  <p className="mt-2 text-xs text-amber-700">
+                    Changing this overwrites the month-wise history for earlier months and directly affects the outstanding balance.
+                  </p>
+                )}
               </div>
-            </div>
 
-            {/* headings */}
-            <div>
-              <div className="mb-2 flex items-center justify-between">
-                <div className="text-sm font-medium text-slate-600">Other Charges</div>
-                <Button size="sm" variant="outline" onClick={addH}>+ Add Charge</Button>
+              {/* month-wise tuition (current onward) */}
+              <div>
+                <div className="mb-2 text-sm font-medium text-slate-600">Monthly Tuition (auto-added each month)</div>
+                <div className="grid grid-cols-2 gap-2">
+                  {monthly.map((m, i) => (
+                    <div key={m.id ?? i} className="flex items-center gap-2">
+                      <span className="w-28 shrink-0 text-sm text-slate-600">{m.label}</span>
+                      <Input type="number" value={m.amount} onChange={(e) => setM(i, e.target.value)} />
+                    </div>
+                  ))}
+                  {monthly.length === 0 && <div className="text-sm text-slate-400">No current month yet.</div>}
+                </div>
               </div>
-              <div className="space-y-2">
-                {headings.map((h, i) => (
-                  <div key={h.id ?? i} className="grid grid-cols-12 gap-2">
-                    <div className="col-span-7"><Input placeholder="Description" value={h.description ?? h.label ?? ''} onChange={(e) => setH(i, { description: e.target.value, label: e.target.value })} /></div>
-                    <div className="col-span-4"><Input type="number" placeholder="Amount" value={h.amount} onChange={(e) => setH(i, { amount: e.target.value })} /></div>
-                    <div className="col-span-1 flex items-center justify-center"><Button size="icon" variant="ghost" className="text-red-600" onClick={() => removeH(i)}>×</Button></div>
-                  </div>
-                ))}
+
+              {/* headings */}
+              <div>
+                <div className="mb-2 flex items-center justify-between">
+                  <div className="text-sm font-medium text-slate-600">Other Charges</div>
+                  <Button size="sm" variant="outline" onClick={addH}>+ Add Charge</Button>
+                </div>
+                <div className="space-y-2">
+                  {headings.map((h, i) => (
+                    <div key={h.id ?? i} className="grid grid-cols-12 gap-2">
+                      <div className="col-span-7"><Input placeholder="Description" value={h.description ?? h.label ?? ''} onChange={(e) => setH(i, { description: e.target.value, label: e.target.value })} /></div>
+                      <div className="col-span-4"><Input type="number" placeholder="Amount" value={h.amount} onChange={(e) => setH(i, { amount: e.target.value })} /></div>
+                      <div className="col-span-1 flex items-center justify-center"><Button size="icon" variant="ghost" className="text-red-600" onClick={() => removeH(i)}>×</Button></div>
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Fine / Late Fee"><Input type="number" value={fine} onChange={(e) => setFine(e.target.value)} /></Field>
-            </div>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Fine / Late Fee"><Input type="number" value={fine} onChange={(e) => setFine(e.target.value)} /></Field>
+              </div>
 
-            <div className="rounded-lg border border-slate-200 p-3">
-              <div className="mb-2 text-sm font-medium text-slate-600">Options</div>
-              <label className="flex items-center gap-2 text-sm text-slate-700">
-                <input type="checkbox" checked={feeFree} onChange={(e) => setFeeFree(e.target.checked)} className="size-4 accent-[#262081]" />
-                Free — waive monthly tuition for upcoming months
-              </label>
-              <div className="mt-2 flex flex-wrap items-center gap-3">
+              <div className="rounded-lg border border-slate-200 p-3">
+                <div className="mb-2 text-sm font-medium text-slate-600">Options</div>
                 <label className="flex items-center gap-2 text-sm text-slate-700">
-                  <input type="checkbox" checked={usesTransport} onChange={(e) => setUsesTransport(e.target.checked)} className="size-4 accent-[#262081]" />
-                  Uses transport service
+                  <input type="checkbox" checked={feeFree} onChange={(e) => setFeeFree(e.target.checked)} className="size-4 accent-[#262081]" />
+                  Free — waive monthly tuition for upcoming months
                 </label>
-                <div className="flex items-center gap-2"><span className="text-sm text-slate-500">Transport fee</span>
-                  <Input type="number" className="w-28" value={transportFee} onChange={(e) => setTransportFee(e.target.value)} disabled={!usesTransport} /></div>
+                <div className="mt-2 flex flex-wrap items-center gap-3">
+                  <label className="flex items-center gap-2 text-sm text-slate-700">
+                    <input type="checkbox" checked={usesTransport} onChange={(e) => setUsesTransport(e.target.checked)} className="size-4 accent-[#262081]" />
+                    Uses transport service
+                  </label>
+                  <div className="flex items-center gap-2"><span className="text-sm text-slate-500">Transport fee</span>
+                    <Input type="number" className="w-28" value={transportFee} onChange={(e) => setTransportFee(e.target.value)} disabled={!usesTransport} /></div>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-4 text-sm">
+                <span className="text-slate-500">Sub Total: <b className="text-slate-700">{inr(gross)}</b></span>
+                <div className="rounded-lg bg-brand-50 px-4 py-2 text-right"><div className="text-xs text-brand">Grand Total</div><div className="text-lg font-bold text-brand">{inr(grand)}</div></div>
               </div>
             </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
-            <div className="flex items-center justify-end gap-4 text-sm">
-              <span className="text-slate-500">Sub Total: <b className="text-slate-700">{inr(gross)}</b></span>
-              <div className="rounded-lg bg-brand-50 px-4 py-2 text-right"><div className="text-xs text-brand">Grand Total</div><div className="text-lg font-bold text-brand">{inr(grand)}</div></div>
-            </div>
+      {/* warning before unlocking previous dues */}
+      <Dialog open={warnOpen} onOpenChange={(o) => { if (!o) setWarnOpen(false); }}>
+        <DialogContent
+          className="max-w-md"
+          title="Edit Previous Dues?"
+          footer={<>
+            <Button variant="secondary" onClick={() => setWarnOpen(false)}>Cancel</Button>
+            <Button className="bg-amber-600 hover:bg-amber-700" onClick={() => { setPrevUnlocked(true); setWarnOpen(false); }}>Yes, edit</Button>
+          </>}
+        >
+          <div className="space-y-2 text-sm text-slate-600">
+            <p className="font-medium text-amber-700">⚠ You are about to edit carried-forward Previous Dues.</p>
+            <p>This is the consolidated balance from earlier months. Changing it overwrites the month-wise history for those months and directly changes the student's outstanding total.</p>
+            <p>Only proceed to correct an opening balance or a historical dues figure.</p>
           </div>
-        )}
-      </DialogContent>
-    </Dialog>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

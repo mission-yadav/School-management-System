@@ -211,7 +211,7 @@ router.get('/ledger/:studentId', requireRole('ADMIN'), asyncHandler(async (req, 
 
   const monthly = inv.items.filter((i) => i.bsMonth)
     .sort((a, b) => (a.bsYear! - b.bsYear!) || (a.bsMonth! - b.bsMonth!))
-    .map((i) => ({ id: i.id, label: `${BS_MONTHS[i.bsMonth! - 1]} ${i.bsYear}`, bsYear: i.bsYear, bsMonth: i.bsMonth, amount: i.amount, description: i.description }));
+    .map((i) => ({ id: i.id, label: i.description === 'Previous Dues' ? 'Previous Dues' : `${BS_MONTHS[i.bsMonth! - 1]} ${i.bsYear}`, bsYear: i.bsYear, bsMonth: i.bsMonth, amount: i.amount, description: i.description }));
   const headings = inv.items.filter((i) => !i.bsMonth)
     .map((i) => ({ id: i.id, label: i.description, amount: i.amount, description: i.description }));
 
