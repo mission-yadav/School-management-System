@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import api, { apiError } from '@/lib/api';
 import { useFetch } from '@/lib/useFetch';
 import { inr } from '@/lib/utils';
@@ -33,12 +34,15 @@ const COMPONENTS: { key: string; header: string }[] = [
 ];
 
 export default function Fees() {
+  const { pathname } = useLocation();
+  const navigate = useNavigate();
+  const tab = pathname.endsWith('/structure') ? 'structure' : 'invoices';
   return (
     <div>
-      <PageHeader title="Fee Management" subtitle="Intimations, collections & fee structure" />
-      <Tabs defaultValue="invoices">
+      <PageHeader title="Fee Management" subtitle="Billing, collections & fee structure" />
+      <Tabs value={tab} onValueChange={(v) => navigate(v === 'structure' ? '/fees/structure' : '/fees')}>
         <TabsList>
-          <TabsTrigger value="invoices">Invoices</TabsTrigger>
+          <TabsTrigger value="invoices">Billing &amp; Ledgers</TabsTrigger>
           <TabsTrigger value="structure">Fee Structure</TabsTrigger>
         </TabsList>
         <TabsContent value="invoices"><InvoicesTab /></TabsContent>

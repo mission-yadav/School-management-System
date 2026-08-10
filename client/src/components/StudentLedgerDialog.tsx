@@ -11,6 +11,23 @@ import { useToast } from '@/components/ui/toast';
 
 export interface LedgerPreview { url: string; filename: string; title: string; }
 
+/** Group month-wise tuition items by BS year (ascending), months ordered within. */
+function monthlyByYear(monthly: any[]) {
+  const map = new Map<number, any[]>();
+  for (const m of monthly) {
+    const y = m.bsYear ?? 0;
+    if (!map.has(y)) map.set(y, []);
+    map.get(y)!.push(m);
+  }
+  return [...map.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([year, items]) => ({
+      year,
+      items: items.sort((a, b) => (a.bsMonth || 0) - (b.bsMonth || 0)),
+      total: items.reduce((s, x) => s + Number(x.amount || 0), 0),
+    }));
+}
+
 /** Running fee ledger: month-wise tuition + heading charges, dues, and payment history. */
 export function StudentLedgerDialog({ open, studentId, onClose, onPreview }: {
   open: boolean; studentId: number | null; onClose: () => void; onPreview: (p: LedgerPreview) => void;
@@ -53,13 +70,20 @@ export function StudentLedgerDialog({ open, studentId, onClose, onPreview }: {
             </div>
 
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              {/* month-wise tuition */}
+              {/* month-wise tuition, grouped by BS year */}
               <div>
-                <div className="mb-2 text-sm font-semibold text-slate-600">Monthly Tuition</div>
+                <div className="mb-2 text-sm font-semibold text-slate-600">Monthly Tuition (year &amp; month wise)</div>
                 <div className="rounded-lg border border-slate-200">
-                  {d.monthly.map((m: any) => (
-                    <div key={m.id} className="flex justify-between border-b border-slate-100 px-3 py-1.5 text-sm last:border-0">
-                      <span className="text-slate-600">{m.label}</span><span className="tabular-nums font-medium">{inr(m.amount)}</span>
+                  {monthlyByYear(d.monthly).map((grp) => (
+                    <div key={grp.year}>
+                      <div className="flex justify-between bg-slate-50 px-3 py-1 text-xs font-semibold text-brand">
+                        <span>Year {grp.year}</span><span className="tabular-nums">{inr(grp.total)}</span>
+                      </div>
+                      {grp.items.map((m: any) => (
+                        <div key={m.id} className="flex justify-between border-b border-slate-100 px-3 py-1.5 text-sm last:border-0">
+                          <span className="pl-2 text-slate-600">{String(m.label).replace(/\s+\d{4}$/, '')}</span><span className="tabular-nums font-medium">{inr(m.amount)}</span>
+                        </div>
+                      ))}
                     </div>
                   ))}
                   {d.monthly.length === 0 && <div className="px-3 py-2 text-sm text-slate-400">None</div>}

@@ -1,10 +1,57 @@
 import { useState } from 'react';
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
-import { Menu, LogOut, GraduationCap } from 'lucide-react';
+import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
+import { Menu, LogOut, GraduationCap, ChevronDown } from 'lucide-react';
 import { useAuth } from '@/context/auth';
-import { navForRole } from '@/lib/nav';
+import { navForRole, type NavItem } from '@/lib/nav';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+
+function NavItemLink({ item, onNavigate, nested }: { item: NavItem; onNavigate: () => void; nested?: boolean }) {
+  return (
+    <NavLink
+      to={item.to!}
+      end={item.to === '/fees'}
+      onClick={onNavigate}
+      className={({ isActive }) =>
+        cn(
+          'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+          nested && 'ml-3 py-1.5 text-[13px]',
+          isActive ? 'bg-white text-brand' : 'text-white/80 hover:bg-white/10'
+        )
+      }
+    >
+      <item.icon className={cn('shrink-0', nested ? 'size-3.5' : 'size-4')} />
+      <span className="truncate">{item.label}</span>
+      {item.stub && <span className="ml-auto text-[9px] uppercase text-white/40">soon</span>}
+    </NavLink>
+  );
+}
+
+function CollapsibleNavItem({ item, onNavigate }: { item: NavItem; onNavigate: () => void }) {
+  const { pathname } = useLocation();
+  const childActive = (item.children || []).some((c) => c.to && (pathname === c.to || pathname.startsWith(c.to + '/')));
+  const [open, setOpen] = useState(childActive);
+  return (
+    <div>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className={cn(
+          'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+          childActive ? 'text-white' : 'text-white/80 hover:bg-white/10'
+        )}
+      >
+        <item.icon className="size-4 shrink-0" />
+        <span className="truncate">{item.label}</span>
+        <ChevronDown className={cn('ml-auto size-4 transition-transform', open && 'rotate-180')} />
+      </button>
+      {open && (
+        <div className="mt-0.5 flex flex-col gap-0.5 border-l border-white/10 pl-2">
+          {(item.children || []).map((c) => <NavItemLink key={c.to} item={c} onNavigate={onNavigate} nested />)}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function Layout() {
   const { user, logout } = useAuth();
@@ -35,23 +82,10 @@ export default function Layout() {
             <div key={g.title} className="mb-4">
               <div className="px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-white/40">{g.title}</div>
               <div className="mt-1 flex flex-col gap-0.5">
-                {g.items.map((item) => (
-                  <NavLink
-                    key={item.to}
-                    to={item.to}
-                    onClick={() => setOpen(false)}
-                    className={({ isActive }) =>
-                      cn(
-                        'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-                        isActive ? 'bg-white text-brand' : 'text-white/80 hover:bg-white/10'
-                      )
-                    }
-                  >
-                    <item.icon className="size-4 shrink-0" />
-                    <span className="truncate">{item.label}</span>
-                    {item.stub && <span className="ml-auto text-[9px] uppercase text-white/40">soon</span>}
-                  </NavLink>
-                ))}
+                {g.items.map((item) => item.children
+                  ? <CollapsibleNavItem key={item.label} item={item} onNavigate={() => setOpen(false)} />
+                  : <NavItemLink key={item.to} item={item} onNavigate={() => setOpen(false)} />
+                )}
               </div>
             </div>
           ))}

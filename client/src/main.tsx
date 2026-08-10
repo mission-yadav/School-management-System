@@ -58,6 +58,7 @@ createRoot(document.getElementById('root')!).render(
                 <Route path="/classes" element={<Classes />} />
                 <Route path="/subjects" element={<Subjects />} />
                 <Route path="/fees" element={<Fees />} />
+                <Route path="/fees/structure" element={<Fees />} />
                 <Route path="/expenses" element={<Expenses />} />
                 <Route path="/payroll" element={<Payroll />} />
                 <Route path="/audit" element={<AuditReport />} />

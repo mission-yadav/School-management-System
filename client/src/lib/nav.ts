@@ -8,11 +8,12 @@ import {
 import type { LucideIcon } from 'lucide-react';
 
 export interface NavItem {
-  to: string;
+  to?: string;              // omitted for parent (expandable) items
   label: string;
   icon: LucideIcon;
   roles: Role[];
-  stub?: boolean; // renders the "coming soon" placeholder
+  stub?: boolean;           // renders the "coming soon" placeholder
+  children?: NavItem[];     // expandable sub-items
 }
 export interface NavGroup { title: string; items: NavItem[]; }
 
@@ -51,10 +52,15 @@ export const NAV: NavGroup[] = [
   {
     title: 'Finance',
     items: [
-      { to: '/fees', label: 'Fee Management', icon: Wallet, roles: A },
+      {
+        label: 'Fee Management', icon: Wallet, roles: A, children: [
+          { to: '/fees', label: 'Billing & Ledgers', icon: Receipt, roles: A },
+          { to: '/fees/structure', label: 'Fee Structure', icon: BookOpen, roles: A },
+          { to: '/audit', label: 'Audit Report', icon: Landmark, roles: A },
+        ],
+      },
       { to: '/expenses', label: 'Expenses', icon: Receipt, roles: A },
       { to: '/payroll', label: 'Payroll', icon: Wallet, roles: A },
-      { to: '/audit', label: 'Audit Report', icon: Landmark, roles: A },
     ],
   },
   {
@@ -86,7 +92,14 @@ export const NAV: NavGroup[] = [
   },
 ];
 
-/** Flattened nav items visible for a role. */
+/** Nav items visible for a role (filters children too). */
 export function navForRole(role: Role): NavGroup[] {
-  return NAV.map((g) => ({ ...g, items: g.items.filter((i) => i.roles.includes(role)) })).filter((g) => g.items.length);
+  return NAV
+    .map((g) => ({
+      ...g,
+      items: g.items
+        .filter((i) => i.roles.includes(role))
+        .map((i) => (i.children ? { ...i, children: i.children.filter((c) => c.roles.includes(role)) } : i)),
+    }))
+    .filter((g) => g.items.length);
 }
