@@ -52,6 +52,60 @@ export default function Fees() {
   );
 }
 
+/* ===================================================== Billing month bar */
+function BillingMonthCard({ onAdvanced }: { onAdvanced: () => void }) {
+  const toast = useToast();
+  const [info, setInfo] = useState<any>(null);
+  const [confirm, setConfirm] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => { api.get('/fees/billing-period').then(({ data }) => setInfo(data)).catch(() => {}); }, []);
+
+  async function advance() {
+    setBusy(true);
+    try {
+      const { data } = await api.post('/fees/billing-period/advance');
+      setInfo(data); setConfirm(false);
+      toast(`Billing month updated to ${data.label}`);
+      onAdvanced();
+    } catch (e) { toast(apiError(e), 'error'); }
+    finally { setBusy(false); }
+  }
+
+  if (!info) return null;
+  return (
+    <Card>
+      <CardContent className="flex flex-wrap items-center justify-between gap-3 py-4">
+        <div>
+          <div className="text-sm text-slate-500">Current Billing Month</div>
+          <div className="text-2xl font-bold text-brand">{info.label}</div>
+          <div className="text-xs text-slate-400">
+            New charges accrue only up to this month.{' '}
+            {info.isBehindReal && <span className="text-amber-600">Calendar is already {info.real.label} — advance when you're ready.</span>}
+          </div>
+        </div>
+        <Button onClick={() => setConfirm(true)}>Update Month → {info.next.label}</Button>
+      </CardContent>
+
+      <Dialog open={confirm} onOpenChange={(o) => { if (!o) setConfirm(false); }}>
+        <DialogContent
+          className="max-w-md"
+          title="Advance Billing Month?"
+          footer={<>
+            <Button variant="secondary" onClick={() => setConfirm(false)} disabled={busy}>Cancel</Button>
+            <Button onClick={advance} disabled={busy}>{busy ? 'Updating…' : `Yes, advance to ${info.next.label}`}</Button>
+          </>}
+        >
+          <div className="space-y-2 text-sm text-slate-600">
+            <p>This moves the billing month from <b>{info.label}</b> to <b>{info.next.label}</b> and adds <b>{info.next.label}</b> tuition to every active student's ledger.</p>
+            <p className="text-amber-700">The new month's charges apply immediately and appear on the next bills. This isn't auto-undone.</p>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </Card>
+  );
+}
+
 /* ============================================================== Invoices */
 function InvoicesTab() {
   const toast = useToast();
@@ -212,6 +266,8 @@ function InvoicesTab() {
 
   return (
     <div>
+      <div className="mb-4"><BillingMonthCard onAdvanced={reload} /></div>
+
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div className="grid flex-1 grid-cols-1 gap-3 sm:grid-cols-3">
           <Card><CardContent className="pt-5"><div className="text-sm text-slate-500">Total Billed</div><div className="text-2xl font-bold text-slate-800">{inr(summary?.billed || 0)}</div></CardContent></Card>
@@ -227,7 +283,7 @@ function InvoicesTab() {
         </Select>
         <SearchModeToggle value={listBy} onChange={setListBy} />
         <Input className="w-56" placeholder={searchPlaceholder(listBy)} value={listSearch} onChange={(e) => setListSearch(e.target.value)} inputMode={listBy === 'iemis' ? 'numeric' : 'text'} />
-        <span className="ml-auto text-xs text-slate-400">One running ledger per student · monthly tuition auto-added each month</span>
+        <span className="ml-auto text-xs text-slate-400">One running ledger per student · tuition added when you advance the billing month</span>
       </div>
 
       {loading ? <Loading /> : <DataTable columns={columns} rows={filteredInvoices} />}

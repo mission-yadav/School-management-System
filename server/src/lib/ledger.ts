@@ -7,10 +7,44 @@ while (NepaliDate && typeof NepaliDate !== 'function' && NepaliDate.default) Nep
 // BS months (Baisakh = 1 … Chaitra = 12)
 export const BS_MONTHS = ['Baisakh', 'Jestha', 'Asar', 'Shrawan', 'Bhadra', 'Ashwin', 'Kartik', 'Mangsir', 'Poush', 'Magh', 'Falgun', 'Chaitra'];
 
-/** Current Bikram Sambat year and month (1-indexed). */
-export function currentBS(): { year: number; month: number } {
+export type BSPeriod = { year: number; month: number };
+
+/** Real-world current Bikram Sambat year and month (1-indexed), from today's date. */
+export function currentBS(): BSPeriod {
   const bs = new NepaliDate(new Date()).getBS();
   return { year: bs.year, month: bs.month + 1 };
+}
+
+const BILLING_KEY = 'billingPeriod';
+
+/** The admin-controlled billing month (BS). Charges accrue up to this month, not the calendar
+ *  month — the admin advances it manually. Initialised to the real current month on first use. */
+export async function getBillingPeriod(): Promise<BSPeriod> {
+  const row = await prisma.setting.findUnique({ where: { key: BILLING_KEY } });
+  const v = row?.value as any;
+  if (v && typeof v.year === 'number' && typeof v.month === 'number' && v.month >= 1 && v.month <= 12) {
+    return { year: v.year, month: v.month };
+  }
+  const now = currentBS();
+  await prisma.setting.upsert({ where: { key: BILLING_KEY }, update: { value: now as any }, create: { key: BILLING_KEY, value: now as any } });
+  return now;
+}
+
+export async function setBillingPeriod(year: number, month: number): Promise<BSPeriod> {
+  const p = { year, month };
+  await prisma.setting.upsert({ where: { key: BILLING_KEY }, update: { value: p as any }, create: { key: BILLING_KEY, value: p as any } });
+  return p;
+}
+
+/** The month immediately after the given period (rolls the BS year at Chaitra). */
+export function nextPeriod({ year, month }: BSPeriod): BSPeriod {
+  return month >= 12 ? { year: year + 1, month: 1 } : { year, month: month + 1 };
+}
+
+/** Advance the billing month by one and persist. Caller should re-accrue ledgers afterwards. */
+export async function advanceBillingPeriod(): Promise<BSPeriod> {
+  const next = nextPeriod(await getBillingPeriod());
+  return setBillingPeriod(next.year, next.month);
 }
 
 const HEADINGS: { key: string; label: string }[] = [
@@ -25,14 +59,14 @@ const HEADINGS: { key: string; label: string }[] = [
  * has a monthly-tuition line for every BS month elapsed this session + the standard headings.
  * Returns the ledger invoice id. Never overwrites amounts that already exist (they stay editable).
  */
-export async function ensureLedger(studentId: number): Promise<number | null> {
+export async function ensureLedger(studentId: number, period?: BSPeriod): Promise<number | null> {
   const student = await prisma.student.findUnique({
     where: { id: studentId },
     include: { class: { include: { feeStructure: true } } },
   });
   if (!student) return null;
 
-  const { year, month } = currentBS();
+  const { year, month } = period ?? await getBillingPeriod();
   let inv = await prisma.feeInvoice.findFirst({ where: { studentId, isLedger: true }, include: { items: true } });
   if (!inv) {
     inv = await prisma.feeInvoice.create({
@@ -64,6 +98,7 @@ export async function ensureLedger(studentId: number): Promise<number | null> {
 
 /** Ensure ledgers exist for every active student (used before listing). */
 export async function ensureAllLedgers(): Promise<void> {
+  const period = await getBillingPeriod();
   const students = await prisma.student.findMany({ where: { status: 'ACTIVE' }, select: { id: true } });
-  for (const s of students) await ensureLedger(s.id);
+  for (const s of students) await ensureLedger(s.id, period);
 }

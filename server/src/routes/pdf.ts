@@ -5,18 +5,18 @@ import { asyncHandler, AppError, intParam } from '../lib/http.js';
 import { streamPdf, letterhead, heading, signatureBlock, BRAND, LOGO_PATH, QUARTER_A4, type SchoolInfo } from '../lib/pdf.js';
 import { bsDate } from '../lib/nepaliDate.js';
 import { computeAudit, type Line } from '../lib/audit.js';
-import { currentBS, BS_MONTHS } from '../lib/ledger.js';
+import { getBillingPeriod, BS_MONTHS, type BSPeriod } from '../lib/ledger.js';
 
-/** "Up to Shrawan 2083" — the fee period the document covers. */
-function upToLabel() {
-  const { year, month } = currentBS();
+/** "Up to Shrawan 2083" — the fee period the document covers (the billing month). */
+function upToLabel(period: BSPeriod) {
+  const { year, month } = period;
   return `Up to ${BS_MONTHS[month - 1]} ${year}`;
 }
 
-/** Build the printable particulars: previous months' tuition collapsed into "Previous Dues",
- *  then the current month's tuition, then the other (heading) charges in canonical order. */
-function particularLines(items: { description: string; amount: number; bsMonth?: number | null; bsYear?: number | null }[]) {
-  const { year, month } = currentBS();
+/** Build the printable particulars: months before the billing month collapsed into "Previous Dues",
+ *  then the billing month's tuition, then the other (heading) charges in canonical order. */
+function particularLines(items: { description: string; amount: number; bsMonth?: number | null; bsYear?: number | null }[], period: BSPeriod) {
+  const { year, month } = period;
   const prevDues = items
     .filter((i) => i.bsMonth && (i.bsYear! < year || (i.bsYear === year && i.bsMonth! < month)))
     .reduce((a, i) => a + i.amount, 0);
@@ -128,6 +128,7 @@ router.get('/receipt/invoice/:invoiceId', asyncHandler(async (req, res) => {
   if (!inv) throw new AppError(404, 'Invoice not found');
   if (inv.payments.length === 0) throw new AppError(400, 'No payments recorded yet');
   const school = await getSchool();
+  const period = await getBillingPeriod();
   const gross = inv.items.reduce((a, i) => a + i.amount, 0);
   const total = gross + inv.fine - inv.discount;
   const paid = inv.payments.reduce((a, p) => a + p.amount, 0);
@@ -144,7 +145,7 @@ router.get('/receipt/invoice/:invoiceId', asyncHandler(async (req, res) => {
     let dy = y + 30;
     const info: [string, string][] = [
       ['Student', inv.student.name], ['IEMIS ID', inv.student.iemis || '—'],
-      ['Class', inv.student.class?.name || '—'], ['Fee For', upToLabel()],
+      ['Class', inv.student.class?.name || '—'], ['Fee For', upToLabel(period)],
     ];
     for (const [k, v] of info) { doc.font('Helvetica-Bold').text(`${k}: `, 50, dy, { continued: true }).font('Helvetica').text(v); dy += 20; }
 
@@ -180,6 +181,7 @@ router.get('/receipt/:paymentId', asyncHandler(async (req, res) => {
   });
   if (!payment) throw new AppError(404, 'Payment not found');
   const school = await getSchool();
+  const period = await getBillingPeriod();
   const inv = payment.invoice;
   const total = inv.items.reduce((a, i) => a + i.amount, 0) + inv.fine - inv.discount;
   // cumulative amounts up to and including this payment (so the receipt reflects the balance at that time)
@@ -218,7 +220,7 @@ router.get('/receipt/:paymentId', asyncHandler(async (req, res) => {
 
     const info: [string, string][] = [
       ['Student', inv.student.name], ['Class', inv.student.class?.name || '—'],
-      ['IEMIS ID', inv.student.iemis || '—'], ['Fee For', upToLabel()],
+      ['IEMIS ID', inv.student.iemis || '—'], ['Fee For', upToLabel(period)],
     ];
     doc.fontSize(8);
     for (const [k, v] of info) { doc.font('Helvetica-Bold').text(`${k}: `, L, y, { continued: true }).font('Helvetica').text(v); y += 12; }
@@ -237,7 +239,7 @@ router.get('/receipt/:paymentId', asyncHandler(async (req, res) => {
       y += 12;
     };
 
-    for (const it of particularLines(inv.items)) row(it.label, it.amount.toLocaleString('en-IN'));
+    for (const it of particularLines(inv.items, period)) row(it.label, it.amount.toLocaleString('en-IN'));
     if (inv.discount) row('Less', `- ${inv.discount.toLocaleString('en-IN')}`);
     if (inv.fine) row('Fine', inv.fine.toLocaleString('en-IN'));
 
@@ -268,6 +270,7 @@ router.get('/intimation/:invoiceId', asyncHandler(async (req, res) => {
   });
   if (!inv) throw new AppError(404, 'Invoice not found');
   const school = await getSchool();
+  const period = await getBillingPeriod();
   const gross = inv.items.reduce((a, i) => a + i.amount, 0);
   const total = gross + inv.fine - inv.discount;
   const paid = inv.payments.reduce((a, p) => a + p.amount, 0);
@@ -284,7 +287,7 @@ router.get('/intimation/:invoiceId', asyncHandler(async (req, res) => {
     let dy = y + 30;
     const info: [string, string][] = [
       ['Student', inv.student.name], ['IEMIS ID', inv.student.iemis || '—'],
-      ['Class', inv.student.class?.name || '—'], ['Fee For', upToLabel()],
+      ['Class', inv.student.class?.name || '—'], ['Fee For', upToLabel(period)],
       ...(inv.dueDate ? [['Due Date', bsDate(inv.dueDate)] as [string, string]] : []),
     ];
     for (const [k, v] of info) { doc.font('Helvetica-Bold').text(`${k}: `, 50, dy, { continued: true }).font('Helvetica').text(v); dy += 20; }
@@ -295,7 +298,7 @@ router.get('/intimation/:invoiceId', asyncHandler(async (req, res) => {
       .text('Particulars', 60, dy + 6).text('Amount (Rs.)', 50, dy + 6, { align: 'right' });
     doc.fillColor('black').font('Helvetica');
     dy += 30;
-    for (const it of particularLines(inv.items)) {
+    for (const it of particularLines(inv.items, period)) {
       const emphasize = it.label === 'Previous Dues';
       doc.font(emphasize ? 'Helvetica-Bold' : 'Helvetica');
       doc.text(it.label, 60, dy).text(it.amount.toLocaleString('en-IN'), 50, dy, { align: 'right' });

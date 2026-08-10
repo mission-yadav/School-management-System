@@ -2,7 +2,7 @@ import { Router } from 'express';
 import prisma from '../prisma.js';
 import { authRequired, requireRole } from '../middleware/auth.js';
 import { asyncHandler, AppError, intParam } from '../lib/http.js';
-import { ensureLedger, ensureAllLedgers, currentBS, BS_MONTHS } from '../lib/ledger.js';
+import { ensureLedger, ensureAllLedgers, currentBS, getBillingPeriod, setBillingPeriod, advanceBillingPeriod, nextPeriod, BS_MONTHS } from '../lib/ledger.js';
 
 const router = Router();
 router.use(authRequired);
@@ -207,7 +207,7 @@ router.get('/ledger/:studentId', requireRole('ADMIN'), asyncHandler(async (req, 
   });
   if (!student || !inv) throw new AppError(404, 'Not found');
   const t = invoiceTotals(inv);
-  const { year, month } = currentBS();
+  const { year, month } = await getBillingPeriod();
 
   const monthly = inv.items.filter((i) => i.bsMonth)
     .sort((a, b) => (a.bsYear! - b.bsYear!) || (a.bsMonth! - b.bsMonth!))
@@ -252,6 +252,35 @@ router.put('/ledger/:studentId', requireRole('ADMIN'), asyncHandler(async (req, 
   const { total, settled } = invoiceTotals(inv!);
   await prisma.feeInvoice.update({ where: { id: invId }, data: { status: statusFor(total, settled) } });
   res.json({ ok: true });
+}));
+
+// ---- Billing month (manually advanced by the admin) ----
+function periodInfo(p: { year: number; month: number }) {
+  const fmt = (q: { year: number; month: number }) => ({ year: q.year, month: q.month, monthName: BS_MONTHS[q.month - 1], label: `${BS_MONTHS[q.month - 1]} ${q.year}` });
+  const real = currentBS();
+  return { ...fmt(p), next: fmt(nextPeriod(p)), real: fmt(real), isBehindReal: p.year < real.year || (p.year === real.year && p.month < real.month) };
+}
+
+/** GET /api/fees/billing-period — the current billing month + the next one to advance to. */
+router.get('/billing-period', requireRole('ADMIN'), asyncHandler(async (_req, res) => {
+  res.json(periodInfo(await getBillingPeriod()));
+}));
+
+/** POST /api/fees/billing-period/advance — move to the next month and apply its charges to all ledgers. */
+router.post('/billing-period/advance', requireRole('ADMIN'), asyncHandler(async (_req, res) => {
+  const p = await advanceBillingPeriod();
+  await ensureAllLedgers();
+  res.json(periodInfo(p));
+}));
+
+/** POST /api/fees/billing-period — set the billing month explicitly, then re-accrue ledgers. */
+router.post('/billing-period', requireRole('ADMIN'), asyncHandler(async (req, res) => {
+  const year = Number(req.body?.year), month = Number(req.body?.month);
+  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12)
+    throw new AppError(400, 'year and month (1-12) are required');
+  const p = await setBillingPeriod(year, month);
+  await ensureAllLedgers();
+  res.json(periodInfo(p));
 }));
 
 /** GET /api/fees/:id */
