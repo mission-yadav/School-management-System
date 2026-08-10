@@ -5,7 +5,13 @@ import { asyncHandler, AppError, intParam } from '../lib/http.js';
 import { streamPdf, letterhead, heading, signatureBlock, BRAND, type SchoolInfo } from '../lib/pdf.js';
 import { bsDate } from '../lib/nepaliDate.js';
 import { computeAudit, type Line } from '../lib/audit.js';
-import { currentBS } from '../lib/ledger.js';
+import { currentBS, BS_MONTHS } from '../lib/ledger.js';
+
+/** "Up to Shrawan 2083" — the fee period the document covers. */
+function upToLabel() {
+  const { year, month } = currentBS();
+  return `Up to ${BS_MONTHS[month - 1]} ${year}`;
+}
 
 /** Build the printable particulars: previous months' tuition collapsed into "Previous Dues",
  *  then the current month's tuition, then the other (heading) charges in canonical order. */
@@ -135,7 +141,7 @@ router.get('/receipt/invoice/:invoiceId', asyncHandler(async (req, res) => {
     let dy = y + 30;
     const info: [string, string][] = [
       ['Student', inv.student.name], ['IEMIS ID', inv.student.iemis || '—'],
-      ['Class', inv.student.class?.name || '—'], ['Fee For', inv.title],
+      ['Class', inv.student.class?.name || '—'], ['Fee For', upToLabel()],
     ];
     for (const [k, v] of info) { doc.font('Helvetica-Bold').text(`${k}: `, 50, dy, { continued: true }).font('Helvetica').text(v); dy += 20; }
 
@@ -186,7 +192,7 @@ router.get('/receipt/:paymentId', asyncHandler(async (req, res) => {
     let dy = y + 30;
     const info: [string, string][] = [
       ['Student', inv.student.name], ['IEMIS ID', inv.student.iemis || '—'],
-      ['Class', inv.student.class?.name || '—'], ['Invoice', inv.title],
+      ['Class', inv.student.class?.name || '—'], ['Fee For', upToLabel()],
     ];
     for (const [k, v] of info) { doc.font('Helvetica-Bold').text(`${k}: `, 50, dy, { continued: true }).font('Helvetica').text(v); dy += 20; }
 
@@ -240,7 +246,7 @@ router.get('/intimation/:invoiceId', asyncHandler(async (req, res) => {
     let dy = y + 30;
     const info: [string, string][] = [
       ['Student', inv.student.name], ['IEMIS ID', inv.student.iemis || '—'],
-      ['Class', inv.student.class?.name || '—'], ['Fee For', inv.title],
+      ['Class', inv.student.class?.name || '—'], ['Fee For', upToLabel()],
       ...(inv.dueDate ? [['Due Date', bsDate(inv.dueDate)] as [string, string]] : []),
     ];
     for (const [k, v] of info) { doc.font('Helvetica-Bold').text(`${k}: `, 50, dy, { continued: true }).font('Helvetica').text(v); dy += 20; }
