@@ -15,9 +15,17 @@ export interface SchoolInfo {
   pan?: string;
 }
 
+/** Exactly a quarter of A4 (595.28 x 841.89) — four tile onto one A4 sheet. */
+export const QUARTER_A4: [number, number] = [297.64, 420.94];
+
 /** Stream a PDF built by `draw` to the HTTP response as an attachment. */
-export function streamPdf(res: Response, filename: string, draw: (doc: PDFKit.PDFDocument) => void) {
-  const doc = new PDFDocument({ size: 'A4', margin: 50 });
+export function streamPdf(
+  res: Response,
+  filename: string,
+  draw: (doc: PDFKit.PDFDocument) => void,
+  opts: { size?: string | [number, number]; margin?: number } = {},
+) {
+  const doc = new PDFDocument({ size: opts.size ?? 'A4', margin: opts.margin ?? 50 });
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
   doc.pipe(res);

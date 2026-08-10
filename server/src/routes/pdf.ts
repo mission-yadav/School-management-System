@@ -2,7 +2,7 @@ import { Router } from 'express';
 import prisma from '../prisma.js';
 import { authRequired } from '../middleware/auth.js';
 import { asyncHandler, AppError, intParam } from '../lib/http.js';
-import { streamPdf, letterhead, heading, signatureBlock, BRAND, LOGO_PATH, type SchoolInfo } from '../lib/pdf.js';
+import { streamPdf, letterhead, heading, signatureBlock, BRAND, LOGO_PATH, QUARTER_A4, type SchoolInfo } from '../lib/pdf.js';
 import { bsDate } from '../lib/nepaliDate.js';
 import { computeAudit, type Line } from '../lib/audit.js';
 import { currentBS, BS_MONTHS } from '../lib/ledger.js';
@@ -188,46 +188,75 @@ router.get('/receipt/:paymentId', asyncHandler(async (req, res) => {
   const concessionToDate = upto.reduce((a, p) => a + (p.less || 0), 0);
   const settledToDate = paidToDate + concessionToDate;
 
+  const balanceDue = total - settledToDate;
+  // Quarter-A4 (A6) receipt — four fit on a single A4 sheet.
   streamPdf(res, `${payment.receiptNo}.pdf`, (doc) => {
-    let y = letterhead(doc, school);
-    y = heading(doc, 'Fee Receipt', y);
-    doc.fontSize(10).fillColor('#555')
-      .text(`Receipt No: ${payment.receiptNo}`, 50, y)
-      .text(`Date: ${bsDate(payment.paidAt, true)}`, 50, y, { align: 'right' });
-    doc.fillColor('black').fontSize(12);
+    doc.page.margins.bottom = 0;   // keep everything on the single quarter page
+    const W = doc.page.width;      // 297.64
+    const H = doc.page.height;     // 420.94
+    const L = 14, R = W - 14;      // content bounds
 
-    let dy = y + 30;
+    // compact branded letterhead
+    const bandH = 50;
+    doc.rect(0, 0, W, bandH).fill(BRAND);
+    try { doc.image(LOGO_PATH, L, 7, { fit: [36, 36] }); } catch { /* logo optional */ }
+    doc.fillColor('white').font('Helvetica-Bold').fontSize(12).text(school.name, L + 44, 9, { width: W - (L + 44) - L, lineBreak: false });
+    doc.font('Helvetica').fontSize(6)
+      .text([school.address, school.pan && `PAN: ${school.pan}`, school.phone && `Contact: ${school.phone}`].filter(Boolean).join('   |   '), L + 44, 26, { width: W - (L + 44) - L, lineBreak: false });
+    doc.fillColor('black');
+
+    let y = bandH + 8;
+    doc.fillColor(BRAND).font('Helvetica-Bold').fontSize(11).text('FEE RECEIPT', L, y, { width: R - L, align: 'center' });
+    doc.fillColor('black');
+    y += 18;
+
+    doc.font('Helvetica').fontSize(7.5).fillColor('#555')
+      .text(`Receipt No: ${payment.receiptNo}`, L, y)
+      .text(`Date: ${bsDate(payment.paidAt, true)}`, L, y, { width: R - L, align: 'right' });
+    doc.fillColor('black');
+    y += 14;
+
     const info: [string, string][] = [
-      ['Student', inv.student.name], ['IEMIS ID', inv.student.iemis || '—'],
-      ['Class', inv.student.class?.name || '—'], ['Fee For', upToLabel()],
+      ['Student', inv.student.name], ['Class', inv.student.class?.name || '—'],
+      ['IEMIS ID', inv.student.iemis || '—'], ['Fee For', upToLabel()],
     ];
-    for (const [k, v] of info) { doc.font('Helvetica-Bold').text(`${k}: `, 50, dy, { continued: true }).font('Helvetica').text(v); dy += 20; }
+    doc.fontSize(8);
+    for (const [k, v] of info) { doc.font('Helvetica-Bold').text(`${k}: `, L, y, { continued: true }).font('Helvetica').text(v); y += 12; }
 
-    dy += 10;
-    doc.rect(50, dy, doc.page.width - 100, 24).fill('#f0f0f7');
-    doc.fillColor(BRAND).font('Helvetica-Bold').fontSize(11)
-      .text('Description', 60, dy + 6).text('Amount (Rs.)', 50, dy + 6, { align: 'right' });
+    y += 4;
+    doc.rect(L, y, R - L, 15).fill('#f0f0f7');
+    doc.fillColor(BRAND).font('Helvetica-Bold').fontSize(8)
+      .text('Description', L + 5, y + 4).text('Amount (Rs.)', L, y + 4, { width: R - L - 5, align: 'right' });
     doc.fillColor('black').font('Helvetica');
-    dy += 30;
-    for (const it of particularLines(inv.items)) {
-      doc.text(it.label, 60, dy).text(it.amount.toLocaleString('en-IN'), 50, dy, { align: 'right' });
-      dy += 20;
-    }
-    if (inv.discount) { doc.text('Less', 60, dy).text(`- ${inv.discount.toLocaleString('en-IN')}`, 50, dy, { align: 'right' }); dy += 20; }
-    if (inv.fine) { doc.text('Fine', 60, dy).text(inv.fine.toLocaleString('en-IN'), 50, dy, { align: 'right' }); dy += 20; }
+    y += 19;
 
-    dy += 6;
-    doc.moveTo(50, dy).lineTo(doc.page.width - 50, dy).stroke('#ccc');
-    dy += 10;
-    doc.font('Helvetica-Bold');
-    doc.text('Invoice Total', 60, dy).text(total.toLocaleString('en-IN'), 50, dy, { align: 'right' }); dy += 20;
-    doc.fillColor('green').text('Amount Paid Now', 60, dy).text(payment.amount.toLocaleString('en-IN'), 50, dy, { align: 'right' }); dy += 20;
-    if (payment.less > 0) { doc.fillColor('#b91c1c').text('Less (concession)', 60, dy).text(payment.less.toLocaleString('en-IN'), 50, dy, { align: 'right' }); dy += 20; }
-    doc.fillColor('black').text('Paid To Date', 60, dy).text(paidToDate.toLocaleString('en-IN'), 50, dy, { align: 'right' }); dy += 20;
-    doc.fillColor(total - settledToDate > 0 ? 'red' : 'green').text('Balance Due', 60, dy).text((total - settledToDate).toLocaleString('en-IN'), 50, dy, { align: 'right' });
-    doc.fillColor('black').font('Helvetica').fontSize(9).text(`Payment mode: ${payment.method}`, 60, dy + 30);
-    signatureBlock(doc);
-  });
+    const row = (label: string, amount: string, opts: { bold?: boolean; color?: string } = {}) => {
+      doc.font(opts.bold ? 'Helvetica-Bold' : 'Helvetica').fillColor(opts.color || 'black').fontSize(8);
+      doc.text(label, L + 5, y).text(amount, L, y, { width: R - L - 5, align: 'right' });
+      doc.fillColor('black');
+      y += 12;
+    };
+
+    for (const it of particularLines(inv.items)) row(it.label, it.amount.toLocaleString('en-IN'));
+    if (inv.discount) row('Less', `- ${inv.discount.toLocaleString('en-IN')}`);
+    if (inv.fine) row('Fine', inv.fine.toLocaleString('en-IN'));
+
+    y += 3;
+    doc.moveTo(L, y).lineTo(R, y).stroke('#ccc');
+    y += 7;
+    row('Invoice Total', total.toLocaleString('en-IN'), { bold: true });
+    row('Amount Paid Now', payment.amount.toLocaleString('en-IN'), { bold: true, color: 'green' });
+    if (payment.less > 0) row('Less (concession)', payment.less.toLocaleString('en-IN'), { bold: true, color: '#b91c1c' });
+    row('Paid To Date', paidToDate.toLocaleString('en-IN'), { bold: true });
+    row('Balance Due', balanceDue.toLocaleString('en-IN'), { bold: true, color: balanceDue > 0 ? 'red' : 'green' });
+
+    doc.font('Helvetica').fontSize(7).fillColor('#555').text(`Payment mode: ${payment.method}`, L + 5, y + 2);
+
+    // signature pinned near the bottom of the quarter page
+    doc.fillColor('black').font('Helvetica').fontSize(7)
+      .text('___________________', R - 120, H - 26, { width: 120, align: 'center' })
+      .text('Authorised Signatory', R - 120, H - 16, { width: 120, align: 'center' });
+  }, { size: QUARTER_A4, margin: 14 });
 }));
 
 /** GET /api/pdf/intimation/:invoiceId — fee Intimation Card (issued to demand payment) */
