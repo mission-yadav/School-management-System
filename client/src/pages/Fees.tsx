@@ -17,7 +17,8 @@ import { SearchModeToggle, searchPlaceholder, type SearchMode } from '@/componen
 import { PdfPreviewDialog, type PdfPreview } from '@/components/PdfPreviewDialog';
 import { FeeEditDialog } from '@/components/FeeEditDialog';
 import { StudentLedgerDialog } from '@/components/StudentLedgerDialog';
-import { Pencil } from 'lucide-react';
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
+import { Pencil, FileText, Wallet, ScrollText, ChevronDown } from 'lucide-react';
 
 type Line = { key: string; label: string; amount: number | string; include: boolean; conditional?: string };
 
@@ -173,9 +174,6 @@ function InvoicesTab() {
 
   const money = (v: any) => (v ? inr(v) : '—');
   const columns: Column<any>[] = [
-    { key: 'edit', header: '', className: 'w-10', render: (r) => (
-      <Button size="icon" variant="ghost" className="h-8 w-8 text-brand" title="Edit fees" onClick={() => setFeeEdit({ open: true, invoiceId: r.id, studentId: r.studentId })}><Pencil className="size-4" /></Button>
-    ) },
     { key: 'student', header: 'Student', render: (r) => (
       <div>
         <div className="flex items-center gap-1.5">
@@ -192,12 +190,19 @@ function InvoicesTab() {
     { key: 'due', header: 'Dues', className: 'text-right', render: (r) => (
       <span className={`inline-block rounded-md px-2.5 py-1 text-sm font-semibold ${r.due > 0 ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'}`}>{inr(r.due)}</span>
     ) },
-    { key: 'a', header: '', render: (r) => (
-      <div className="flex flex-wrap gap-1">
-        <Button size="sm" variant="outline" onClick={() => setPreview({ url: `/pdf/intimation/${r.id}`, filename: `intimation-${r.id}.pdf`, title: 'Fee Intimation Card' })}>Intimation</Button>
-        {r.status !== 'PAID' && <Button size="sm" variant="outline" onClick={() => startPay(r)}>Collect</Button>}
-        <Button size="sm" variant="outline" onClick={() => setLedgerId(r.studentId)}>Record</Button>
-      </div>
+    { key: 'a', header: '', className: 'text-right', render: (r) => (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button size="sm" variant="outline">Actions <ChevronDown className="size-4" /></Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent>
+          <DropdownMenuItem onSelect={() => setFeeEdit({ open: true, invoiceId: r.id, studentId: r.studentId })}><Pencil className="size-4" /> Edit Fees</DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => setPreview({ url: `/pdf/intimation/${r.id}`, filename: `intimation-${r.id}.pdf`, title: 'Fee Intimation Card' })}><FileText className="size-4" /> Intimation</DropdownMenuItem>
+          {r.status !== 'PAID' && <DropdownMenuItem onSelect={() => startPay(r)}><Wallet className="size-4" /> Collect Payment</DropdownMenuItem>}
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onSelect={() => setLedgerId(r.studentId)}><ScrollText className="size-4" /> Record / Ledger</DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     ) },
   ];
 
