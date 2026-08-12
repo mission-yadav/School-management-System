@@ -238,7 +238,7 @@ router.get('/ledger/:studentId', requireRole('ADMIN'), asyncHandler(async (req, 
     session: { year, month, monthName: BS_MONTHS[month - 1] },
     student: {
       id: student.id, name: student.name, iemis: student.iemis, className: student.class?.name || null,
-      feeFree: student.feeFree, usesTransport: student.usesTransport, transportFee: student.transportFee,
+      feeFree: student.feeFree, annualExempt: student.annualExempt, usesTransport: student.usesTransport, transportFee: student.transportFee,
     },
     monthly, headings,
     discount: inv.discount, fine: inv.fine, previousPaid: opening?.amount || 0,
@@ -259,9 +259,11 @@ router.put('/ledger/:studentId', requireRole('ADMIN'), asyncHandler(async (req, 
   for (const m of (monthly || []))
     items.push({ description: m.description || `${BS_MONTHS[(m.bsMonth || 1) - 1]} ${m.bsYear} – Tuition Fee`, amount: Number(m.amount || 0), bsYear: m.bsYear || null, bsMonth: m.bsMonth || null });
   for (const h of (headings || []))
-    if (h.description) items.push({ description: h.description, amount: Number(h.amount || 0), bsYear: h.bsYear ?? null, bsMonth: null });
+    if (h.description && h.description !== 'Annual Charge') items.push({ description: h.description, amount: Number(h.amount || 0), bsYear: h.bsYear ?? null, bsMonth: null });
 
-  await prisma.feeItem.deleteMany({ where: { invoiceId: invId } });
+  // Annual charges are managed by ensureLedger (yearly + per-student exemption) — never
+  // wiped/recreated by a fee edit, so preserve them here.
+  await prisma.feeItem.deleteMany({ where: { invoiceId: invId, NOT: { description: 'Annual Charge' } } });
   await prisma.feeInvoice.update({
     where: { id: invId },
     data: { discount: Number(discount || 0), fine: Number(fine || 0), items: { create: items } },

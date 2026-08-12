@@ -21,6 +21,7 @@ function pickProfile(body: any) {
   if (body.status !== undefined) data.status = body.status;
   if (body.usesTransport !== undefined) data.usesTransport = !!body.usesTransport;
   if (body.feeFree !== undefined) data.feeFree = !!body.feeFree;
+  if (body.annualExempt !== undefined) data.annualExempt = !!body.annualExempt;
   if (body.transportFee !== undefined)
     data.transportFee = body.transportFee === '' || body.transportFee == null ? null : Number(body.transportFee);
   return data;

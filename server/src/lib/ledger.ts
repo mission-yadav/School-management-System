@@ -137,11 +137,15 @@ export async function ensureLedger(studentId: number, period?: BSPeriod): Promis
 
   // Annual charge: once per BS year, starting the year AFTER the ledger began — so the
   // (mid-year) setup year is skipped, then it's added at Baisakh of every following year.
+  // A per-student exemption (annualExempt) disables it and strips any existing annual lines.
+  const annualItems = inv.items.filter((i) => i.description === 'Annual Charge');
   const annualAmt = s?.annualCharge ?? 0;
-  if (annualAmt > 0) {
+  if (student.annualExempt) {
+    if (annualItems.length) await prisma.feeItem.deleteMany({ where: { invoiceId: inv.id, description: 'Annual Charge' } });
+  } else if (annualAmt > 0) {
     const existingYears = inv.items.filter((i) => i.bsMonth).map((i) => i.bsYear!);
     const startYear = existingYears.length ? Math.min(...existingYears) : year;
-    const haveAnnual = new Set(inv.items.filter((i) => i.description === 'Annual Charge').map((i) => i.bsYear));
+    const haveAnnual = new Set(annualItems.map((i) => i.bsYear));
     for (let y = startYear + 1; y <= year; y++) {
       if (!haveAnnual.has(y)) toCreate.push({ invoiceId: inv.id, description: 'Annual Charge', amount: annualAmt, bsYear: y, bsMonth: null });
     }
@@ -184,9 +188,9 @@ export async function syncClassLedgers(classId: number): Promise<number> {
     });
 
     // Annual charge recurs yearly — update every year's line to the new amount (or remove
-    // all if set to 0). Never create here; ensureLedger adds them at each Baisakh.
+    // all if set to 0 or the student is exempt). Never create here; ensureLedger adds them.
     const annualAmt = s?.annualCharge ?? 0;
-    if (annualAmt > 0) await prisma.feeItem.updateMany({ where: { invoiceId: invId, description: 'Annual Charge' }, data: { amount: annualAmt } });
+    if (annualAmt > 0 && !student.annualExempt) await prisma.feeItem.updateMany({ where: { invoiceId: invId, description: 'Annual Charge' }, data: { amount: annualAmt } });
     else await prisma.feeItem.deleteMany({ where: { invoiceId: invId, description: 'Annual Charge' } });
 
     // canonical one-time headings -> desired amount (0 = remove)

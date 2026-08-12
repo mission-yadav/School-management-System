@@ -25,6 +25,8 @@ export function FeeEditDialog({ open, studentId, onClose, onSaved }: {
   const [headings, setHeadings] = useState<any[]>([]);
   const [fine, setFine] = useState('');
   const [feeFree, setFeeFree] = useState(false);
+  const [annualExempt, setAnnualExempt] = useState(false);
+  const [annualTotal, setAnnualTotal] = useState(0); // existing yearly annual charge(s), read-only
   const [usesTransport, setUsesTransport] = useState(false);
   const [transportFee, setTransportFee] = useState('');
 
@@ -42,10 +44,14 @@ export function FeeEditDialog({ open, studentId, onClose, onSaved }: {
       setPrevItems(prev);
       setPrevDues(String(prev.reduce((a: number, m: any) => a + Number(m.amount || 0), 0)));
       setMonthly(all.filter((m: any) => !isPrev(m)));
-      setHeadings(data.headings.map((h: any) => ({ ...h, amount: String(h.amount) })));
+      // annual charge is auto-managed (yearly + exemption toggle) — keep it out of editable charges
+      const annualRows = data.headings.filter((h: any) => h.description === 'Annual Charge');
+      setAnnualTotal(annualRows.reduce((a: number, h: any) => a + Number(h.amount || 0), 0));
+      setHeadings(data.headings.filter((h: any) => h.description !== 'Annual Charge').map((h: any) => ({ ...h, amount: String(h.amount) })));
       setFine(data.fine ? String(data.fine) : '');
       setPreviousPaid(data.previousPaid ? String(data.previousPaid) : '');
       setFeeFree(!!data.student.feeFree);
+      setAnnualExempt(!!data.student.annualExempt);
       setUsesTransport(!!data.student.usesTransport);
       setTransportFee(data.student.transportFee != null ? String(data.student.transportFee) : '');
     }).catch((e) => toast(apiError(e), 'error')).finally(() => setLoading(false));
@@ -60,7 +66,8 @@ export function FeeEditDialog({ open, studentId, onClose, onSaved }: {
   const prevLabel = prevItems.length ? `Up to ${prevItems[prevItems.length - 1].label}` : 'Opening balance';
   const gross = Number(prevDues || 0)
     + monthly.reduce((a, m) => a + Number(m.amount || 0), 0)
-    + headings.reduce((a, h) => a + Number(h.amount || 0), 0);
+    + headings.reduce((a, h) => a + Number(h.amount || 0), 0)
+    + (annualExempt ? 0 : annualTotal);
   const grand = gross + Number(fine || 0);
 
   function buildPrevPayload() {
@@ -83,7 +90,7 @@ export function FeeEditDialog({ open, studentId, onClose, onSaved }: {
 
   async function save() {
     try {
-      await api.put(`/students/${studentId}`, { feeFree, usesTransport, transportFee: transportFee === '' ? null : Number(transportFee) });
+      await api.put(`/students/${studentId}`, { feeFree, annualExempt, usesTransport, transportFee: transportFee === '' ? null : Number(transportFee) });
       const monthlyPayload = [
         ...buildPrevPayload(),
         ...monthly.map((m) => ({ bsYear: m.bsYear, bsMonth: m.bsMonth, description: m.description, amount: Number(m.amount || 0) })),
@@ -185,6 +192,10 @@ export function FeeEditDialog({ open, studentId, onClose, onSaved }: {
                 <label className="flex items-center gap-2 text-sm text-slate-700">
                   <input type="checkbox" checked={feeFree} onChange={(e) => setFeeFree(e.target.checked)} className="size-4 accent-[#262081]" />
                   Free — waive monthly tuition for upcoming months
+                </label>
+                <label className="mt-2 flex items-center gap-2 text-sm text-slate-700">
+                  <input type="checkbox" checked={!annualExempt} onChange={(e) => setAnnualExempt(!e.target.checked)} className="size-4 accent-[#262081]" />
+                  Apply annual charge <span className="text-slate-400">(added once each year at Baisakh)</span>
                 </label>
                 <div className="mt-2 flex flex-wrap items-center gap-3">
                   <label className="flex items-center gap-2 text-sm text-slate-700">
