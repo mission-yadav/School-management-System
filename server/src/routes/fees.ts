@@ -7,6 +7,8 @@ import { ensureLedger, ensureAllLedgers, syncClassLedgers, currentBS, getBilling
 const router = Router();
 router.use(authRequired);
 
+const OPENING_REF = 'OPENING'; // marks the carried-forward "Previous Paid" payment
+
 function invoiceTotals(inv: { items: { amount: number }[]; payments: { amount: number; less?: number }[]; fine: number; discount: number }) {
   const gross = inv.items.reduce((a, i) => a + i.amount, 0);
   const total = gross + inv.fine - inv.discount;
@@ -226,6 +228,10 @@ router.get('/ledger/:studentId', requireRole('ADMIN'), asyncHandler(async (req, 
   const headings = inv.items.filter((i) => !i.bsMonth)
     .map((i) => ({ id: i.id, label: i.description, amount: i.amount, description: i.description }));
 
+  // carried-forward opening payment (shown as an editable "Previous Paid" field, not a receipt row)
+  const opening = inv.payments.find((p) => p.reference === OPENING_REF);
+  const realPayments = inv.payments.filter((p) => p.reference !== OPENING_REF);
+
   res.json({
     invoiceId: inv.id,
     session: { year, month, monthName: BS_MONTHS[month - 1] },
@@ -234,10 +240,10 @@ router.get('/ledger/:studentId', requireRole('ADMIN'), asyncHandler(async (req, 
       feeFree: student.feeFree, usesTransport: student.usesTransport, transportFee: student.transportFee,
     },
     monthly, headings,
-    discount: inv.discount, fine: inv.fine,
+    discount: inv.discount, fine: inv.fine, previousPaid: opening?.amount || 0,
     totals: { billed: t.total, paid: t.paid, concession: t.concession, due: t.due },
     status: inv.status, dueDate: inv.dueDate,
-    payments: inv.payments.map((p) => ({ id: p.id, receiptNo: p.receiptNo, amount: p.amount, less: p.less, method: p.method, paidAt: p.paidAt })),
+    payments: realPayments.map((p) => ({ id: p.id, receiptNo: p.receiptNo, amount: p.amount, less: p.less, method: p.method, paidAt: p.paidAt })),
   });
 }));
 
@@ -246,7 +252,7 @@ router.put('/ledger/:studentId', requireRole('ADMIN'), asyncHandler(async (req, 
   const studentId = intParam(req.params.studentId, 'studentId');
   const invId = await ensureLedger(studentId);
   if (!invId) throw new AppError(404, 'Student not found');
-  const { monthly, headings, discount, fine } = req.body || {};
+  const { monthly, headings, discount, fine, previousPaid } = req.body || {};
 
   const items: any[] = [];
   for (const m of (monthly || []))
@@ -259,6 +265,19 @@ router.put('/ledger/:studentId', requireRole('ADMIN'), asyncHandler(async (req, 
     where: { id: invId },
     data: { discount: Number(discount || 0), fine: Number(fine || 0), items: { create: items } },
   });
+
+  // carried-forward "Previous Paid" — a single opening payment record
+  if (previousPaid !== undefined) {
+    const amt = Number(previousPaid || 0);
+    const existing = await prisma.payment.findFirst({ where: { invoiceId: invId, reference: OPENING_REF } });
+    if (amt > 0) {
+      if (existing) await prisma.payment.update({ where: { id: existing.id }, data: { amount: amt } });
+      else await prisma.payment.create({ data: { invoiceId: invId, amount: amt, less: 0, method: 'CASH', reference: OPENING_REF, receiptNo: `${OPENING_REF}-${invId}` } });
+    } else if (existing) {
+      await prisma.payment.delete({ where: { id: existing.id } });
+    }
+  }
+
   const inv = await prisma.feeInvoice.findUnique({ where: { id: invId }, include: { items: true, payments: true } });
   const { total, settled } = invoiceTotals(inv!);
   await prisma.feeInvoice.update({ where: { id: invId }, data: { status: statusFor(total, settled) } });

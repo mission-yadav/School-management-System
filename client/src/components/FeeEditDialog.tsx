@@ -19,7 +19,9 @@ export function FeeEditDialog({ open, studentId, onClose, onSaved }: {
   const [prevItems, setPrevItems] = useState<any[]>([]);  // original prior-month items (before current)
   const [prevDues, setPrevDues] = useState('');           // editable consolidated previous dues
   const [prevUnlocked, setPrevUnlocked] = useState(false);
-  const [warnOpen, setWarnOpen] = useState(false);
+  const [previousPaid, setPreviousPaid] = useState('');   // carried-forward opening payment
+  const [paidUnlocked, setPaidUnlocked] = useState(false);
+  const [warn, setWarn] = useState<null | 'dues' | 'paid'>(null);
   const [headings, setHeadings] = useState<any[]>([]);
   const [fine, setFine] = useState('');
   const [feeFree, setFeeFree] = useState(false);
@@ -29,7 +31,7 @@ export function FeeEditDialog({ open, studentId, onClose, onSaved }: {
   useEffect(() => {
     if (!open || !studentId) return;
     setLoading(true);
-    setPrevUnlocked(false); setWarnOpen(false);
+    setPrevUnlocked(false); setPaidUnlocked(false); setWarn(null);
     api.get(`/fees/ledger/${studentId}`).then(({ data }) => {
       const { year, month } = data.session;
       setSession({ year, month });
@@ -41,6 +43,7 @@ export function FeeEditDialog({ open, studentId, onClose, onSaved }: {
       setMonthly(all.filter((m: any) => !isPrev(m)));
       setHeadings(data.headings.map((h: any) => ({ ...h, amount: String(h.amount) })));
       setFine(data.fine ? String(data.fine) : '');
+      setPreviousPaid(data.previousPaid ? String(data.previousPaid) : '');
       setFeeFree(!!data.student.feeFree);
       setUsesTransport(!!data.student.usesTransport);
       setTransportFee(data.student.transportFee != null ? String(data.student.transportFee) : '');
@@ -84,7 +87,7 @@ export function FeeEditDialog({ open, studentId, onClose, onSaved }: {
       await api.put(`/fees/ledger/${studentId}`, {
         monthly: monthlyPayload,
         headings: headings.filter((h) => (h.description || h.label)).map((h) => ({ description: h.description || h.label, amount: Number(h.amount || 0) })),
-        discount: 0, fine: Number(fine || 0),
+        discount: 0, fine: Number(fine || 0), previousPaid: Number(previousPaid || 0),
       });
       toast('Fees updated'); onSaved(); onClose();
     } catch (e) { toast(apiError(e), 'error'); }
@@ -106,7 +109,7 @@ export function FeeEditDialog({ open, studentId, onClose, onSaved }: {
                   <div className="text-sm font-medium text-slate-600">Previous Dues <span className="text-slate-400">(carried forward)</span></div>
                   {prevUnlocked
                     ? <span className="text-xs font-medium text-amber-600">Editing enabled</span>
-                    : <Button size="sm" variant="outline" onClick={() => setWarnOpen(true)}>Edit</Button>}
+                    : <Button size="sm" variant="outline" onClick={() => setWarn('dues')}>Edit</Button>}
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="w-28 shrink-0 text-sm text-slate-600">{prevLabel}</span>
@@ -115,6 +118,25 @@ export function FeeEditDialog({ open, studentId, onClose, onSaved }: {
                 {prevUnlocked && (
                   <p className="mt-2 text-xs text-amber-700">
                     Changing this overwrites the month-wise history for earlier months and directly affects the outstanding balance.
+                  </p>
+                )}
+              </div>
+
+              {/* previous paid — carried-forward opening payment, editing gated behind a warning */}
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50/50 p-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <div className="text-sm font-medium text-slate-600">Previous Paid <span className="text-slate-400">(carried forward)</span></div>
+                  {paidUnlocked
+                    ? <span className="text-xs font-medium text-emerald-600">Editing enabled</span>
+                    : <Button size="sm" variant="outline" onClick={() => setWarn('paid')}>Edit</Button>}
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="w-28 shrink-0 text-sm text-slate-600">Opening paid</span>
+                  <Input type="number" value={previousPaid} onChange={(e) => setPreviousPaid(e.target.value)} disabled={!paidUnlocked} />
+                </div>
+                {paidUnlocked && (
+                  <p className="mt-2 text-xs text-emerald-700">
+                    Records money already received before this ledger. It counts toward Paid and reduces the balance — it is not a printed receipt.
                   </p>
                 )}
               </div>
@@ -179,21 +201,32 @@ export function FeeEditDialog({ open, studentId, onClose, onSaved }: {
         </DialogContent>
       </Dialog>
 
-      {/* warning before unlocking previous dues */}
-      <Dialog open={warnOpen} onOpenChange={(o) => { if (!o) setWarnOpen(false); }}>
+      {/* warning before unlocking a carried-forward field */}
+      <Dialog open={!!warn} onOpenChange={(o) => { if (!o) setWarn(null); }}>
         <DialogContent
           className="max-w-md"
-          title="Edit Previous Dues?"
+          title={warn === 'paid' ? 'Edit Previous Paid?' : 'Edit Previous Dues?'}
           footer={<>
-            <Button variant="secondary" onClick={() => setWarnOpen(false)}>Cancel</Button>
-            <Button className="bg-amber-600 hover:bg-amber-700" onClick={() => { setPrevUnlocked(true); setWarnOpen(false); }}>Yes, edit</Button>
+            <Button variant="secondary" onClick={() => setWarn(null)}>Cancel</Button>
+            <Button
+              className={warn === 'paid' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-amber-600 hover:bg-amber-700'}
+              onClick={() => { if (warn === 'paid') setPaidUnlocked(true); else setPrevUnlocked(true); setWarn(null); }}
+            >Yes, edit</Button>
           </>}
         >
-          <div className="space-y-2 text-sm text-slate-600">
-            <p className="font-medium text-amber-700">⚠ You are about to edit carried-forward Previous Dues.</p>
-            <p>This is the consolidated balance from earlier months. Changing it overwrites the month-wise history for those months and directly changes the student's outstanding total.</p>
-            <p>Only proceed to correct an opening balance or a historical dues figure.</p>
-          </div>
+          {warn === 'paid' ? (
+            <div className="space-y-2 text-sm text-slate-600">
+              <p className="font-medium text-emerald-700">⚠ You are about to edit carried-forward Previous Paid.</p>
+              <p>This is money treated as already received before this ledger began. Changing it directly increases or decreases the student's Paid total and the balance due.</p>
+              <p>Only proceed to record a genuine opening/advance payment or correct one.</p>
+            </div>
+          ) : (
+            <div className="space-y-2 text-sm text-slate-600">
+              <p className="font-medium text-amber-700">⚠ You are about to edit carried-forward Previous Dues.</p>
+              <p>This is the consolidated balance from earlier months. Changing it overwrites the month-wise history for those months and directly changes the student's outstanding total.</p>
+              <p>Only proceed to correct an opening balance or a historical dues figure.</p>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </>
