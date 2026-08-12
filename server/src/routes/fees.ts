@@ -104,6 +104,7 @@ function componentsOf(items: { description: string; amount: number; bsMonth?: nu
   const out: Record<string, number> = {};
   for (const f of FEE_ORDER) out[f.key] = 0;
   for (const it of items) {
+    if (it.description === 'Previous Dues') continue; // carried forward, not monthly tuition
     if (it.bsMonth) { out.monthlyTuition += it.amount; continue; }
     const k = LABEL_TO_KEY[it.description]; if (k) out[k] = (out[k] || 0) + it.amount;
   }

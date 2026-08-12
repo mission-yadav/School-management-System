@@ -17,10 +17,11 @@ function upToLabel(period: BSPeriod) {
  *  then the billing month's tuition, then the other (heading) charges in canonical order. */
 function particularLines(items: { description: string; amount: number; bsMonth?: number | null; bsYear?: number | null }[], period: BSPeriod) {
   const { year, month } = period;
+  const isPrevDues = (i: { description: string }) => i.description === 'Previous Dues';
   const prevDues = items
-    .filter((i) => i.bsMonth && (i.bsYear! < year || (i.bsYear === year && i.bsMonth! < month)))
+    .filter((i) => isPrevDues(i) || (i.bsMonth && (i.bsYear! < year || (i.bsYear === year && i.bsMonth! < month))))
     .reduce((a, i) => a + i.amount, 0);
-  const currentTuition = items.filter((i) => i.bsMonth === month && i.bsYear === year).sort((a, b) => a.bsMonth! - b.bsMonth!);
+  const currentTuition = items.filter((i) => !isPrevDues(i) && i.bsMonth === month && i.bsYear === year).sort((a, b) => a.bsMonth! - b.bsMonth!);
   const ORDER = ['Annual Charge', 'Computer Fee', 'Transportation Charge', 'Exam Fee', 'Miscellaneous Charges'];
   const rank = (d: string) => { const i = ORDER.indexOf(d); return i < 0 ? 90 : i; };
   const headings = items.filter((i) => !i.bsMonth).sort((a, b) => rank(a.description) - rank(b.description));

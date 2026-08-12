@@ -36,7 +36,8 @@ export function FeeEditDialog({ open, studentId, onClose, onSaved }: {
       const { year, month } = data.session;
       setSession({ year, month });
       const all = data.monthly.map((m: any) => ({ ...m, amount: String(m.amount) }));
-      const isPrev = (m: any) => m.bsYear < year || (m.bsYear === year && m.bsMonth < month);
+      // A consolidated "Previous Dues" line is always previous, whatever month it's stored at.
+      const isPrev = (m: any) => m.description === 'Previous Dues' || m.bsYear < year || (m.bsYear === year && m.bsMonth < month);
       const prev = all.filter(isPrev);
       setPrevItems(prev);
       setPrevDues(String(prev.reduce((a: number, m: any) => a + Number(m.amount || 0), 0)));
@@ -66,14 +67,17 @@ export function FeeEditDialog({ open, studentId, onClose, onSaved }: {
     const origSum = prevItems.reduce((a, m) => a + Number(m.amount || 0), 0);
     const val = Number(prevDues || 0);
     const edited = Math.abs(val - origSum) > 0.001;
-    if (!edited) {
+    const hasConsolidated = prevItems.some((m) => m.description === 'Previous Dues');
+    // Keep the month-wise breakdown only while it's untouched and not already consolidated;
+    // once edited or a "Previous Dues" line exists, collapse everything into one clean line
+    // (this also merges any duplicate "Previous Dues" lines).
+    if (!edited && !hasConsolidated) {
       return prevItems.map((m) => ({ bsYear: m.bsYear, bsMonth: m.bsMonth, description: m.description, amount: Number(m.amount || 0) }));
     }
     if (val === 0) return []; // cleared
-    // Consolidate prior months into a single "Previous Dues" line at the latest prior month.
-    const last = prevItems[prevItems.length - 1];
-    const bsMonth = last ? last.bsMonth : (session.month === 1 ? 12 : session.month - 1);
-    const bsYear = last ? last.bsYear : (session.month === 1 ? session.year - 1 : session.year);
+    // Store one "Previous Dues" line strictly before the current billing month.
+    const bsMonth = session.month === 1 ? 12 : session.month - 1;
+    const bsYear = session.month === 1 ? session.year - 1 : session.year;
     return [{ bsYear, bsMonth, description: 'Previous Dues', amount: val }];
   }
 
