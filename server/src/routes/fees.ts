@@ -227,7 +227,7 @@ router.get('/ledger/:studentId', requireRole('ADMIN'), asyncHandler(async (req, 
     .sort((a, b) => (a.bsYear! - b.bsYear!) || (a.bsMonth! - b.bsMonth!))
     .map((i) => ({ id: i.id, label: i.description === 'Previous Dues' ? 'Previous Dues' : `${BS_MONTHS[i.bsMonth! - 1]} ${i.bsYear}`, bsYear: i.bsYear, bsMonth: i.bsMonth, amount: i.amount, description: i.description }));
   const headings = inv.items.filter((i) => !i.bsMonth)
-    .map((i) => ({ id: i.id, label: i.description, amount: i.amount, description: i.description }));
+    .map((i) => ({ id: i.id, label: i.description === 'Annual Charge' && i.bsYear ? `Annual Charge ${i.bsYear}` : i.description, amount: i.amount, description: i.description, bsYear: i.bsYear }));
 
   // carried-forward opening payment (shown as an editable "Previous Paid" field, not a receipt row)
   const opening = inv.payments.find((p) => p.reference === OPENING_REF);
@@ -259,7 +259,7 @@ router.put('/ledger/:studentId', requireRole('ADMIN'), asyncHandler(async (req, 
   for (const m of (monthly || []))
     items.push({ description: m.description || `${BS_MONTHS[(m.bsMonth || 1) - 1]} ${m.bsYear} – Tuition Fee`, amount: Number(m.amount || 0), bsYear: m.bsYear || null, bsMonth: m.bsMonth || null });
   for (const h of (headings || []))
-    if (h.description) items.push({ description: h.description, amount: Number(h.amount || 0), bsYear: null, bsMonth: null });
+    if (h.description) items.push({ description: h.description, amount: Number(h.amount || 0), bsYear: h.bsYear ?? null, bsMonth: null });
 
   await prisma.feeItem.deleteMany({ where: { invoiceId: invId } });
   await prisma.feeInvoice.update({

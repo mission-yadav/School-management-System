@@ -90,7 +90,7 @@ export function FeeEditDialog({ open, studentId, onClose, onSaved }: {
       ];
       await api.put(`/fees/ledger/${studentId}`, {
         monthly: monthlyPayload,
-        headings: headings.filter((h) => (h.description || h.label)).map((h) => ({ description: h.description || h.label, amount: Number(h.amount || 0) })),
+        headings: headings.filter((h) => (h.description || h.label)).map((h) => ({ description: h.description || h.label, amount: Number(h.amount || 0), bsYear: h.bsYear ?? null })),
         discount: 0, fine: Number(fine || 0), previousPaid: Number(previousPaid || 0),
       });
       toast('Fees updated'); onSaved(); onClose();

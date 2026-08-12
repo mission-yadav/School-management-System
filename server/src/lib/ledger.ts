@@ -89,8 +89,9 @@ export async function revertBillingPeriod(): Promise<BSPeriod> {
   return prev;
 }
 
+// One-time headings added when the ledger begins. Annual Charge is NOT here — it
+// recurs once a year (see the annual-charge block in ensureLedger).
 const HEADINGS: { key: string; label: string }[] = [
-  { key: 'annualCharge', label: 'Annual Charge' },
   { key: 'computerFee', label: 'Computer Fee' },
   { key: 'examFee', label: 'Exam Fee' },
   { key: 'miscCharge', label: 'Miscellaneous Charges' },
@@ -134,6 +135,18 @@ export async function ensureLedger(studentId: number, period?: BSPeriod): Promis
     if (amt > 0 && !haveDesc.has(desc)) toCreate.push({ invoiceId: inv.id, description: desc, amount: amt, bsYear: null, bsMonth: null });
   }
 
+  // Annual charge: once per BS year, starting the year AFTER the ledger began — so the
+  // (mid-year) setup year is skipped, then it's added at Baisakh of every following year.
+  const annualAmt = s?.annualCharge ?? 0;
+  if (annualAmt > 0) {
+    const existingYears = inv.items.filter((i) => i.bsMonth).map((i) => i.bsYear!);
+    const startYear = existingYears.length ? Math.min(...existingYears) : year;
+    const haveAnnual = new Set(inv.items.filter((i) => i.description === 'Annual Charge').map((i) => i.bsYear));
+    for (let y = startYear + 1; y <= year; y++) {
+      if (!haveAnnual.has(y)) toCreate.push({ invoiceId: inv.id, description: 'Annual Charge', amount: annualAmt, bsYear: y, bsMonth: null });
+    }
+  }
+
   if (toCreate.length) await prisma.feeItem.createMany({ data: toCreate });
   return inv.id;
 }
@@ -170,9 +183,14 @@ export async function syncClassLedgers(classId: number): Promise<number> {
       data: { amount: monthly },
     });
 
-    // canonical headings -> desired amount (0 = remove)
+    // Annual charge recurs yearly — update every year's line to the new amount (or remove
+    // all if set to 0). Never create here; ensureLedger adds them at each Baisakh.
+    const annualAmt = s?.annualCharge ?? 0;
+    if (annualAmt > 0) await prisma.feeItem.updateMany({ where: { invoiceId: invId, description: 'Annual Charge' }, data: { amount: annualAmt } });
+    else await prisma.feeItem.deleteMany({ where: { invoiceId: invId, description: 'Annual Charge' } });
+
+    // canonical one-time headings -> desired amount (0 = remove)
     const desired: [string, number][] = [
-      ['Annual Charge', s?.annualCharge ?? 0],
       ['Computer Fee', s?.computerFee ?? 0],
       ['Exam Fee', s?.examFee ?? 0],
       ['Miscellaneous Charges', s?.miscCharge ?? 0],
