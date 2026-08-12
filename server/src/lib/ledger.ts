@@ -41,10 +41,52 @@ export function nextPeriod({ year, month }: BSPeriod): BSPeriod {
   return month >= 12 ? { year: year + 1, month: 1 } : { year, month: month + 1 };
 }
 
+/** The month immediately before the given period (rolls the BS year at Baisakh). */
+export function previousPeriod({ year, month }: BSPeriod): BSPeriod {
+  return month <= 1 ? { year: year - 1, month: 12 } : { year, month: month - 1 };
+}
+
 /** Advance the billing month by one and persist. Caller should re-accrue ledgers afterwards. */
 export async function advanceBillingPeriod(): Promise<BSPeriod> {
   const next = nextPeriod(await getBillingPeriod());
   return setBillingPeriod(next.year, next.month);
+}
+
+/** True when a billed month exists before the current billing month (so a revert is possible). */
+export async function canRevertBilling(): Promise<boolean> {
+  const cur = await getBillingPeriod();
+  const earlier = await prisma.feeItem.findFirst({
+    where: {
+      bsMonth: { not: null },
+      NOT: { description: 'Previous Dues' },
+      OR: [{ bsYear: { lt: cur.year } }, { bsYear: cur.year, bsMonth: { lt: cur.month } }],
+    },
+    select: { id: true },
+  });
+  return !!earlier;
+}
+
+/** Recompute PENDING/PARTIAL/PAID for every ledger (after amounts change). */
+async function recomputeAllStatuses(): Promise<void> {
+  const invs = await prisma.feeInvoice.findMany({ where: { isLedger: true }, include: { items: true, payments: true } });
+  for (const inv of invs) {
+    const total = inv.items.reduce((a, i) => a + i.amount, 0) + inv.fine - inv.discount;
+    const settled = inv.payments.reduce((a, p) => a + p.amount + (p.less || 0), 0);
+    const status = settled <= 0 ? 'PENDING' : settled >= total ? 'PAID' : 'PARTIAL';
+    await prisma.feeInvoice.update({ where: { id: inv.id }, data: { status } });
+  }
+}
+
+/** Step the billing month back by one: removes that month's auto-added tuition lines from
+ *  every ledger (keeping consolidated "Previous Dues") and recomputes statuses. Returns the
+ *  new (previous) period. Caller should ensure canRevertBilling() first. */
+export async function revertBillingPeriod(): Promise<BSPeriod> {
+  const cur = await getBillingPeriod();
+  await prisma.feeItem.deleteMany({ where: { bsYear: cur.year, bsMonth: cur.month, NOT: { description: 'Previous Dues' } } });
+  const prev = previousPeriod(cur);
+  await setBillingPeriod(prev.year, prev.month);
+  await recomputeAllStatuses();
+  return prev;
 }
 
 const HEADINGS: { key: string; label: string }[] = [

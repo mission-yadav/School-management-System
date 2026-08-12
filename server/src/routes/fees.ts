@@ -2,7 +2,7 @@ import { Router } from 'express';
 import prisma from '../prisma.js';
 import { authRequired, requireRole } from '../middleware/auth.js';
 import { asyncHandler, AppError, intParam } from '../lib/http.js';
-import { ensureLedger, ensureAllLedgers, syncClassLedgers, currentBS, getBillingPeriod, setBillingPeriod, advanceBillingPeriod, nextPeriod, BS_MONTHS } from '../lib/ledger.js';
+import { ensureLedger, ensureAllLedgers, syncClassLedgers, currentBS, getBillingPeriod, setBillingPeriod, advanceBillingPeriod, revertBillingPeriod, canRevertBilling, nextPeriod, previousPeriod, BS_MONTHS } from '../lib/ledger.js';
 
 const router = Router();
 router.use(authRequired);
@@ -255,23 +255,33 @@ router.put('/ledger/:studentId', requireRole('ADMIN'), asyncHandler(async (req, 
   res.json({ ok: true });
 }));
 
-// ---- Billing month (manually advanced by the admin) ----
+// ---- Billing month (manually advanced/reverted by the admin) ----
 function periodInfo(p: { year: number; month: number }) {
   const fmt = (q: { year: number; month: number }) => ({ year: q.year, month: q.month, monthName: BS_MONTHS[q.month - 1], label: `${BS_MONTHS[q.month - 1]} ${q.year}` });
   const real = currentBS();
-  return { ...fmt(p), next: fmt(nextPeriod(p)), real: fmt(real), isBehindReal: p.year < real.year || (p.year === real.year && p.month < real.month) };
+  return { ...fmt(p), next: fmt(nextPeriod(p)), prev: fmt(previousPeriod(p)), real: fmt(real), isBehindReal: p.year < real.year || (p.year === real.year && p.month < real.month) };
+}
+async function periodResponse(p: { year: number; month: number }) {
+  return { ...periodInfo(p), canRevert: await canRevertBilling() };
 }
 
-/** GET /api/fees/billing-period — the current billing month + the next one to advance to. */
+/** GET /api/fees/billing-period — the current billing month + next/previous to move to. */
 router.get('/billing-period', requireRole('ADMIN'), asyncHandler(async (_req, res) => {
-  res.json(periodInfo(await getBillingPeriod()));
+  res.json(await periodResponse(await getBillingPeriod()));
 }));
 
 /** POST /api/fees/billing-period/advance — move to the next month and apply its charges to all ledgers. */
 router.post('/billing-period/advance', requireRole('ADMIN'), asyncHandler(async (_req, res) => {
   const p = await advanceBillingPeriod();
   await ensureAllLedgers();
-  res.json(periodInfo(p));
+  res.json(await periodResponse(p));
+}));
+
+/** POST /api/fees/billing-period/revert — step back one month, removing that month's charges from all ledgers. */
+router.post('/billing-period/revert', requireRole('ADMIN'), asyncHandler(async (_req, res) => {
+  if (!(await canRevertBilling())) throw new AppError(400, 'Already at the earliest billing month');
+  const p = await revertBillingPeriod();
+  res.json(await periodResponse(p));
 }));
 
 /** POST /api/fees/billing-period — set the billing month explicitly, then re-accrue ledgers. */
@@ -281,7 +291,7 @@ router.post('/billing-period', requireRole('ADMIN'), asyncHandler(async (req, re
     throw new AppError(400, 'year and month (1-12) are required');
   const p = await setBillingPeriod(year, month);
   await ensureAllLedgers();
-  res.json(periodInfo(p));
+  res.json(await periodResponse(p));
 }));
 
 /** GET /api/fees/:id */

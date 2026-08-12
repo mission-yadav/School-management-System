@@ -56,23 +56,25 @@ export default function Fees() {
 function BillingMonthCard({ onAdvanced }: { onAdvanced: () => void }) {
   const toast = useToast();
   const [info, setInfo] = useState<any>(null);
-  const [confirm, setConfirm] = useState(false);
+  const [action, setAction] = useState<null | 'advance' | 'revert'>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => { api.get('/fees/billing-period').then(({ data }) => setInfo(data)).catch(() => {}); }, []);
 
-  async function advance() {
+  async function run() {
+    if (!action) return;
     setBusy(true);
     try {
-      const { data } = await api.post('/fees/billing-period/advance');
-      setInfo(data); setConfirm(false);
-      toast(`Billing month updated to ${data.label}`);
+      const { data } = await api.post(`/fees/billing-period/${action}`);
+      setInfo(data); setAction(null);
+      toast(`Billing month ${action === 'advance' ? 'advanced' : 'reverted'} to ${data.label}`);
       onAdvanced();
     } catch (e) { toast(apiError(e), 'error'); }
     finally { setBusy(false); }
   }
 
   if (!info) return null;
+  const to = action === 'revert' ? info.prev : info.next;
   return (
     <Card>
       <CardContent className="flex flex-wrap items-center justify-between gap-3 py-4">
@@ -84,22 +86,32 @@ function BillingMonthCard({ onAdvanced }: { onAdvanced: () => void }) {
             {info.isBehindReal && <span className="text-amber-600">Calendar is already {info.real.label} — advance when you're ready.</span>}
           </div>
         </div>
-        <Button onClick={() => setConfirm(true)}>Update Month → {info.next.label}</Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {info.canRevert && <Button variant="outline" onClick={() => setAction('revert')}>← Revert to {info.prev.label}</Button>}
+          <Button onClick={() => setAction('advance')}>Update Month → {info.next.label}</Button>
+        </div>
       </CardContent>
 
-      <Dialog open={confirm} onOpenChange={(o) => { if (!o) setConfirm(false); }}>
+      <Dialog open={!!action} onOpenChange={(o) => { if (!o) setAction(null); }}>
         <DialogContent
           className="max-w-md"
-          title="Advance Billing Month?"
+          title={action === 'revert' ? 'Revert Billing Month?' : 'Advance Billing Month?'}
           footer={<>
-            <Button variant="secondary" onClick={() => setConfirm(false)} disabled={busy}>Cancel</Button>
-            <Button onClick={advance} disabled={busy}>{busy ? 'Updating…' : `Yes, advance to ${info.next.label}`}</Button>
+            <Button variant="secondary" onClick={() => setAction(null)} disabled={busy}>Cancel</Button>
+            <Button onClick={run} disabled={busy}>{busy ? 'Working…' : `Yes, ${action === 'revert' ? 'revert' : 'advance'} to ${to?.label}`}</Button>
           </>}
         >
-          <div className="space-y-2 text-sm text-slate-600">
-            <p>This moves the billing month from <b>{info.label}</b> to <b>{info.next.label}</b> and adds <b>{info.next.label}</b> tuition to every active student's ledger.</p>
-            <p className="text-amber-700">The new month's charges apply immediately and appear on the next bills. This isn't auto-undone.</p>
-          </div>
+          {action === 'revert' ? (
+            <div className="space-y-2 text-sm text-slate-600">
+              <p>This moves the billing month back from <b>{info.label}</b> to <b>{info.prev.label}</b> and removes <b>{info.label}</b> tuition from every student's ledger.</p>
+              <p className="text-amber-700">Payments already recorded are kept, so a student who paid for {info.label} may show a credit until you advance again.</p>
+            </div>
+          ) : (
+            <div className="space-y-2 text-sm text-slate-600">
+              <p>This moves the billing month from <b>{info.label}</b> to <b>{info.next.label}</b> and adds <b>{info.next.label}</b> tuition to every active student's ledger.</p>
+              <p className="text-amber-700">The new month's charges apply immediately and appear on the next bills.</p>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </Card>
