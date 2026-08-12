@@ -51,12 +51,22 @@ router.get('/', requireRole('ADMIN'), asyncHandler(async (req, res) => {
   });
   res.json(invoices.map((inv) => {
     const t = invoiceTotals(inv);
+    // per-month tuition rate (latest real month) vs the accumulated total across months
+    const monthItems = inv.items
+      .filter((i) => i.bsMonth && i.description !== 'Previous Dues')
+      .sort((a, b) => (a.bsYear! - b.bsYear!) || (a.bsMonth! - b.bsMonth!));
+    const components = componentsOf(inv.items);
     return {
       id: inv.id, title: inv.title, studentId: inv.studentId,
       studentName: inv.student.name, iemis: inv.student.iemis, feeFree: inv.student.feeFree,
       classId: inv.student.class?.id || null, className: inv.student.class?.name || null,
       dueDate: inv.dueDate, discount: inv.discount, fine: inv.fine,
-      components: componentsOf(inv.items),
+      components,
+      monthly: {
+        rate: monthItems.length ? monthItems[monthItems.length - 1].amount : 0,
+        months: monthItems.length,
+        accumulated: components.monthlyTuition,
+      },
       ...t, status: inv.status,
     };
   }));

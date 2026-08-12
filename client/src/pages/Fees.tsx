@@ -33,6 +33,26 @@ const COMPONENTS: { key: string; header: string }[] = [
   { key: 'miscCharge', header: 'Misc' },
 ];
 
+/** Monthly column: shows the per-month tuition rate; an arrow reveals the accumulated total. */
+function MonthlyCell({ m }: { m?: { rate: number; months: number; accumulated: number } }) {
+  const [show, setShow] = useState(false);
+  if (!m || !m.rate) return <>—</>;
+  return (
+    <div className="inline-flex flex-col items-end">
+      <button
+        type="button"
+        onClick={() => setShow((s) => !s)}
+        className="inline-flex items-center gap-1 hover:text-brand"
+        title={show ? 'Hide accumulated' : `Accumulated: ${inr(m.accumulated)} (${m.months} mo)`}
+      >
+        {inr(m.rate)}
+        <ChevronDown className={`size-3.5 text-slate-400 transition-transform ${show ? 'rotate-180' : ''}`} />
+      </button>
+      {show && <span className="text-[11px] text-slate-500">Σ {inr(m.accumulated)} · {m.months} mo</span>}
+    </div>
+  );
+}
+
 export default function Fees() {
   const { pathname } = useLocation();
   const navigate = useNavigate();
@@ -254,7 +274,7 @@ function InvoicesTab() {
       </div>
     ) },
     { key: 'title', header: 'Fee', render: (r) => r.title },
-    ...COMPONENTS.map((c) => ({ key: c.key, header: c.header, className: 'text-right whitespace-nowrap', render: (r: any) => money(r.components?.[c.key]) })),
+    ...COMPONENTS.map((c) => ({ key: c.key, header: c.header, className: 'text-right whitespace-nowrap', render: (r: any) => c.key === 'monthlyTuition' ? <MonthlyCell m={r.monthly} /> : money(r.components?.[c.key]) })),
     { key: 'total', header: 'Total', className: 'text-right font-medium', render: (r) => inr(r.total) },
     { key: 'paid', header: 'Paid', className: 'text-right font-medium text-green-600', render: (r) => inr(r.paid) },
     { key: 'due', header: 'Dues', className: 'text-right', render: (r) => (
