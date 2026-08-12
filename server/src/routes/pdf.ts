@@ -2,7 +2,7 @@ import { Router } from 'express';
 import prisma from '../prisma.js';
 import { authRequired } from '../middleware/auth.js';
 import { asyncHandler, AppError, intParam } from '../lib/http.js';
-import { streamPdf, letterhead, heading, signatureBlock, BRAND, LOGO_PATH, QUARTER_A4, type SchoolInfo } from '../lib/pdf.js';
+import { streamPdf, letterhead, heading, signatureBlock, schoolNameFont, BRAND, LOGO_PATH, QUARTER_A4, type SchoolInfo } from '../lib/pdf.js';
 import { bsDate } from '../lib/nepaliDate.js';
 import { computeAudit, type Line } from '../lib/audit.js';
 import { getBillingPeriod, BS_MONTHS, type BSPeriod } from '../lib/ledger.js';
@@ -198,62 +198,63 @@ router.get('/receipt/:paymentId', asyncHandler(async (req, res) => {
     const W = doc.page.width;      // 297.64
     const H = doc.page.height;     // 420.94
     const L = 14, R = W - 14;      // content bounds
+    const nameFont = schoolNameFont(doc);
 
-    // compact branded letterhead
-    const bandH = 50;
-    doc.rect(0, 0, W, bandH).fill(BRAND);
-    try { doc.image(LOGO_PATH, L, 7, { fit: [36, 36] }); } catch { /* logo optional */ }
-    doc.fillColor('white').font('Helvetica-Bold').fontSize(12).text(school.name, L + 44, 9, { width: W - (L + 44) - L, lineBreak: false });
-    doc.font('Helvetica').fontSize(6)
-      .text([school.address, school.pan && `PAN: ${school.pan}`, school.phone && `Contact: ${school.phone}`].filter(Boolean).join('   |   '), L + 44, 26, { width: W - (L + 44) - L, lineBreak: false });
-    doc.fillColor('black');
+    // white compact letterhead — school name in the display font
+    const bandH = 54;
+    try { doc.image(LOGO_PATH, L, 8, { fit: [38, 38] }); } catch { /* logo optional */ }
+    const hx = L + 46;
+    let ns = 13;
+    doc.font(nameFont).fontSize(ns);
+    while (ns > 8 && doc.widthOfString(school.name) > R - hx) { ns -= 0.5; doc.fontSize(ns); }
+    doc.fillColor(BRAND).font(nameFont).fontSize(ns).text(school.name, hx, 10, { lineBreak: false });
+    doc.fillColor('#555').font('Helvetica').fontSize(6.5)
+      .text([school.address, school.pan && `PAN: ${school.pan}`, school.phone && `Contact: ${school.phone}`].filter(Boolean).join('   |   '), hx, 12 + ns, { width: R - hx, lineBreak: false });
+    doc.moveTo(L, bandH).lineTo(R, bandH).lineWidth(1.5).strokeColor(BRAND).stroke();
+    doc.lineWidth(1).fillColor('black');
 
     let y = bandH + 8;
     doc.fillColor(BRAND).font('Helvetica-Bold').fontSize(11).text('FEE RECEIPT', L, y, { width: R - L, align: 'center' });
     doc.fillColor('black');
-    y += 18;
+    y += 17;
 
     doc.font('Helvetica').fontSize(7.5).fillColor('#555')
       .text(`Receipt No: ${payment.receiptNo}`, L, y)
       .text(`Date: ${bsDate(payment.paidAt, true)}`, L, y, { width: R - L, align: 'right' });
     doc.fillColor('black');
-    y += 14;
+    y += 13;
 
     const info: [string, string][] = [
       ['Student', inv.student.name], ['Class', inv.student.class?.name || '—'],
       ['IEMIS ID', inv.student.iemis || '—'], ['Fee For', upToLabel(period)],
     ];
     doc.fontSize(8);
-    for (const [k, v] of info) { doc.font('Helvetica-Bold').text(`${k}: `, L, y, { continued: true }).font('Helvetica').text(v); y += 12; }
-
+    for (const [k, v] of info) { doc.font('Helvetica-Bold').text(`${k}: `, L, y, { continued: true }).font('Helvetica').text(v); y += 11; }
     y += 4;
-    doc.rect(L, y, R - L, 15).fill('#f0f0f7');
-    doc.fillColor(BRAND).font('Helvetica-Bold').fontSize(8)
-      .text('Description', L + 5, y + 4).text('Amount (Rs.)', L, y + 4, { width: R - L - 5, align: 'right' });
-    doc.fillColor('black').font('Helvetica');
-    y += 19;
 
-    const row = (label: string, amount: string, opts: { bold?: boolean; color?: string } = {}) => {
-      doc.font(opts.bold ? 'Helvetica-Bold' : 'Helvetica').fillColor(opts.color || 'black').fontSize(8);
-      doc.text(label, L + 5, y).text(amount, L, y, { width: R - L - 5, align: 'right' });
+    // bordered grid: Description | Amount
+    const rowH = 12.5, colX = R - 80, border = '#c9c9d6';
+    const gridRow = (label: string, amount: string, o: { header?: boolean; bold?: boolean; color?: string } = {}) => {
+      if (o.header) { doc.rect(L, y, colX - L, rowH).fillAndStroke('#eef0f7', border); doc.rect(colX, y, R - colX, rowH).fillAndStroke('#eef0f7', border); }
+      else { doc.rect(L, y, colX - L, rowH).stroke(border); doc.rect(colX, y, R - colX, rowH).stroke(border); }
+      doc.font(o.bold || o.header ? 'Helvetica-Bold' : 'Helvetica').fontSize(8).fillColor(o.color || (o.header ? BRAND : 'black'));
+      doc.text(label, L + 4, y + 3, { width: colX - L - 8, lineBreak: false });
+      doc.text(amount, colX + 2, y + 3, { width: R - colX - 6, align: 'right', lineBreak: false });
       doc.fillColor('black');
-      y += 12;
+      y += rowH;
     };
 
-    for (const it of particularLines(inv.items, period)) row(it.label, it.amount.toLocaleString('en-IN'));
-    if (inv.discount) row('Less', `- ${inv.discount.toLocaleString('en-IN')}`);
-    if (inv.fine) row('Fine', inv.fine.toLocaleString('en-IN'));
+    gridRow('Description', 'Amount (Rs.)', { header: true });
+    for (const it of particularLines(inv.items, period)) gridRow(it.label, it.amount.toLocaleString('en-IN'));
+    if (inv.discount) gridRow('Less', `- ${inv.discount.toLocaleString('en-IN')}`);
+    if (inv.fine) gridRow('Fine', inv.fine.toLocaleString('en-IN'));
+    gridRow('Invoice Total', total.toLocaleString('en-IN'), { bold: true });
+    gridRow('Amount Paid Now', payment.amount.toLocaleString('en-IN'), { bold: true, color: 'green' });
+    if (payment.less > 0) gridRow('Less (concession)', payment.less.toLocaleString('en-IN'), { bold: true, color: '#b91c1c' });
+    gridRow('Paid To Date', paidToDate.toLocaleString('en-IN'), { bold: true });
+    gridRow('Balance Due', balanceDue.toLocaleString('en-IN'), { bold: true, color: balanceDue > 0 ? 'red' : 'green' });
 
-    y += 3;
-    doc.moveTo(L, y).lineTo(R, y).stroke('#ccc');
-    y += 7;
-    row('Invoice Total', total.toLocaleString('en-IN'), { bold: true });
-    row('Amount Paid Now', payment.amount.toLocaleString('en-IN'), { bold: true, color: 'green' });
-    if (payment.less > 0) row('Less (concession)', payment.less.toLocaleString('en-IN'), { bold: true, color: '#b91c1c' });
-    row('Paid To Date', paidToDate.toLocaleString('en-IN'), { bold: true });
-    row('Balance Due', balanceDue.toLocaleString('en-IN'), { bold: true, color: balanceDue > 0 ? 'red' : 'green' });
-
-    doc.font('Helvetica').fontSize(7).fillColor('#555').text(`Payment mode: ${payment.method}`, L + 5, y + 2);
+    doc.font('Helvetica').fontSize(7).fillColor('#555').text(`Payment mode: ${payment.method}`, L, y + 3);
 
     // signature pinned near the bottom of the quarter page
     doc.fillColor('black').font('Helvetica').fontSize(7)
@@ -294,32 +295,29 @@ router.get('/intimation/:invoiceId', asyncHandler(async (req, res) => {
     for (const [k, v] of info) { doc.font('Helvetica-Bold').text(`${k}: `, 50, dy, { continued: true }).font('Helvetica').text(v); dy += 20; }
 
     dy += 10;
-    doc.rect(50, dy, doc.page.width - 100, 24).fill('#f0f0f7');
-    doc.fillColor(BRAND).font('Helvetica-Bold').fontSize(11)
-      .text('Particulars', 60, dy + 6).text('Amount (Rs.)', 50, dy + 6, { align: 'right' });
-    doc.fillColor('black').font('Helvetica');
-    dy += 30;
-    for (const it of particularLines(inv.items, period)) {
-      const emphasize = it.label === 'Previous Dues';
-      doc.font(emphasize ? 'Helvetica-Bold' : 'Helvetica');
-      doc.text(it.label, 60, dy).text(it.amount.toLocaleString('en-IN'), 50, dy, { align: 'right' });
-      dy += 20;
-    }
-    doc.font('Helvetica');
-    doc.moveTo(50, dy).lineTo(doc.page.width - 50, dy).stroke('#ccc'); dy += 8;
-    doc.text('Sub Total', 60, dy).text(gross.toLocaleString('en-IN'), 50, dy, { align: 'right' }); dy += 18;
-    if (inv.fine) { doc.text('Fine', 60, dy).text(inv.fine.toLocaleString('en-IN'), 50, dy, { align: 'right' }); dy += 18; }
-    if (inv.discount) { doc.fillColor('#b91c1c').text('Less', 60, dy).text(`- ${inv.discount.toLocaleString('en-IN')}`, 50, dy, { align: 'right' }); doc.fillColor('black'); dy += 18; }
-    dy += 4;
-    doc.rect(50, dy, doc.page.width - 100, 26).fill('#eeedf8');
-    doc.fillColor(BRAND).font('Helvetica-Bold').fontSize(12)
-      .text('Grand Total', 60, dy + 7).text(total.toLocaleString('en-IN'), 50, dy + 7, { align: 'right' });
-    doc.fillColor('black').font('Helvetica').fontSize(11); dy += 40;
-    doc.fillColor('green').text('Paid / Adjusted', 60, dy).text(settled.toLocaleString('en-IN'), 50, dy, { align: 'right' }); dy += 18;
-    doc.fillColor(total - settled > 0 ? 'red' : 'green').font('Helvetica-Bold')
-      .text('Balance Due', 60, dy).text((total - settled).toLocaleString('en-IN'), 50, dy, { align: 'right' });
+    // bordered grid: Particulars | Amount
+    const L = 50, R = doc.page.width - 50, colX = R - 130, rowH = 22, border = '#c9c9d6';
+    const gridRow = (label: string, amount: string, o: { header?: boolean; fill?: string; bold?: boolean; color?: string } = {}) => {
+      const bg = o.header ? '#eef0f7' : o.fill || null;
+      if (bg) { doc.rect(L, dy, colX - L, rowH).fillAndStroke(bg, border); doc.rect(colX, dy, R - colX, rowH).fillAndStroke(bg, border); }
+      else { doc.rect(L, dy, colX - L, rowH).stroke(border); doc.rect(colX, dy, R - colX, rowH).stroke(border); }
+      doc.font(o.bold || o.header ? 'Helvetica-Bold' : 'Helvetica').fontSize(11).fillColor(o.color || (o.header ? BRAND : 'black'));
+      doc.text(label, L + 8, dy + 6, { width: colX - L - 16, lineBreak: false });
+      doc.text(amount, colX + 4, dy + 6, { width: R - colX - 10, align: 'right', lineBreak: false });
+      doc.fillColor('black');
+      dy += rowH;
+    };
+
+    gridRow('Particulars', 'Amount (Rs.)', { header: true });
+    for (const it of particularLines(inv.items, period)) gridRow(it.label, it.amount.toLocaleString('en-IN'), { bold: it.label === 'Previous Dues' });
+    gridRow('Sub Total', gross.toLocaleString('en-IN'), { bold: true });
+    if (inv.fine) gridRow('Fine', inv.fine.toLocaleString('en-IN'));
+    if (inv.discount) gridRow('Less', `- ${inv.discount.toLocaleString('en-IN')}`, { color: '#b91c1c' });
+    gridRow('Grand Total', total.toLocaleString('en-IN'), { fill: '#eeedf8', bold: true, color: BRAND });
+    gridRow('Paid / Adjusted', settled.toLocaleString('en-IN'), { bold: true, color: 'green' });
+    gridRow('Balance Due', (total - settled).toLocaleString('en-IN'), { bold: true, color: total - settled > 0 ? 'red' : 'green' });
     doc.fillColor('black').font('Helvetica').fontSize(9)
-      .text('Note: This is a fee intimation, not a receipt. Please clear the balance due by the due date. A receipt will be issued on payment.', 50, dy + 34, { width: doc.page.width - 100 });
+      .text('Note: This is a fee intimation, not a receipt. Please clear the balance due by the due date. A receipt will be issued on payment.', 50, dy + 14, { width: doc.page.width - 100 });
     doc.fontSize(11);
     signatureBlock(doc, 'Accountant');
   });
