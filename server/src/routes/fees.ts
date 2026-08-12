@@ -2,7 +2,7 @@ import { Router } from 'express';
 import prisma from '../prisma.js';
 import { authRequired, requireRole } from '../middleware/auth.js';
 import { asyncHandler, AppError, intParam } from '../lib/http.js';
-import { ensureLedger, ensureAllLedgers, currentBS, getBillingPeriod, setBillingPeriod, advanceBillingPeriod, nextPeriod, BS_MONTHS } from '../lib/ledger.js';
+import { ensureLedger, ensureAllLedgers, syncClassLedgers, currentBS, getBillingPeriod, setBillingPeriod, advanceBillingPeriod, nextPeriod, BS_MONTHS } from '../lib/ledger.js';
 
 const router = Router();
 router.use(authRequired);
@@ -123,7 +123,8 @@ router.put('/structure/:classId', requireRole('ADMIN'), asyncHandler(async (req,
     transportFee: num(b.transportFee), miscCharge: num(b.miscCharge),
   };
   const row = await prisma.feeStructure.upsert({ where: { classId }, update: data, create: { classId, ...data } });
-  res.json(row);
+  const synced = await syncClassLedgers(classId); // push the new amounts onto existing bills
+  res.json({ ...row, synced });
 }));
 
 /** GET /api/fees/prefill?studentId= — suggested bill lines from the student's class structure */

@@ -102,3 +102,58 @@ export async function ensureAllLedgers(): Promise<void> {
   const students = await prisma.student.findMany({ where: { status: 'ACTIVE' }, select: { id: true } });
   for (const s of students) await ensureLedger(s.id, period);
 }
+
+/**
+ * Re-apply a class's fee structure to every existing ledger in that class:
+ * updates each month's tuition amount and the canonical heading charges — adding,
+ * updating, or removing them so the bills match the structure. Consolidated
+ * "Previous Dues" lines, per-student Free/Transport flags and any custom
+ * (non-canonical) charges are left untouched. Returns the number of ledgers synced.
+ */
+export async function syncClassLedgers(classId: number): Promise<number> {
+  const cls = await prisma.class.findUnique({ where: { id: classId }, include: { feeStructure: true } });
+  if (!cls) return 0;
+  const s = cls.feeStructure;
+  const period = await getBillingPeriod();
+  const students = await prisma.student.findMany({ where: { classId, status: 'ACTIVE' } });
+
+  for (const student of students) {
+    const invId = await ensureLedger(student.id, period);
+    if (!invId) continue;
+
+    // month-wise tuition (leave any consolidated "Previous Dues" line alone)
+    const monthly = student.feeFree ? 0 : (s?.monthlyTuition ?? 0);
+    await prisma.feeItem.updateMany({
+      where: { invoiceId: invId, bsMonth: { not: null }, NOT: { description: 'Previous Dues' } },
+      data: { amount: monthly },
+    });
+
+    // canonical headings -> desired amount (0 = remove)
+    const desired: [string, number][] = [
+      ['Annual Charge', s?.annualCharge ?? 0],
+      ['Computer Fee', s?.computerFee ?? 0],
+      ['Exam Fee', s?.examFee ?? 0],
+      ['Miscellaneous Charges', s?.miscCharge ?? 0],
+      ['Transportation Charge', student.usesTransport ? (student.transportFee ?? s?.transportFee ?? 0) : 0],
+    ];
+    for (const [desc, amt] of desired) {
+      const existing = await prisma.feeItem.findFirst({ where: { invoiceId: invId, bsMonth: null, description: desc } });
+      if (amt > 0) {
+        if (existing) await prisma.feeItem.update({ where: { id: existing.id }, data: { amount: amt } });
+        else await prisma.feeItem.create({ data: { invoiceId: invId, description: desc, amount: amt, bsYear: null, bsMonth: null } });
+      } else if (existing) {
+        await prisma.feeItem.delete({ where: { id: existing.id } });
+      }
+    }
+
+    // recompute status
+    const inv = await prisma.feeInvoice.findUnique({ where: { id: invId }, include: { items: true, payments: true } });
+    if (inv) {
+      const total = inv.items.reduce((a, i) => a + i.amount, 0) + inv.fine - inv.discount;
+      const settled = inv.payments.reduce((a, p) => a + p.amount + (p.less || 0), 0);
+      const status = settled <= 0 ? 'PENDING' : settled >= total ? 'PAID' : 'PARTIAL';
+      await prisma.feeInvoice.update({ where: { id: invId }, data: { status } });
+    }
+  }
+  return students.length;
+}

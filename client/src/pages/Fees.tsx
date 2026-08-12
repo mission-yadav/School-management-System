@@ -348,15 +348,16 @@ function FeeStructureEditor() {
   const upd = (i: number, key: string, v: string) => setRows((rs) => rs.map((r, idx) => (idx === i ? { ...r, [key]: v } : r)));
   async function save(row: any) {
     try {
-      await api.put(`/fees/structure/${row.classId}`, row);
-      toast(`Saved ${row.className}`);
+      const { data } = await api.put(`/fees/structure/${row.classId}`, row);
+      const n = data?.synced ?? 0;
+      toast(n ? `Saved ${row.className} · updated ${n} existing bill${n === 1 ? '' : 's'}` : `Saved ${row.className}`);
     } catch (e) { toast(apiError(e), 'error'); }
   }
 
   if (loading) return <Loading />;
   return (
     <div>
-      <p className="mb-3 text-sm text-slate-500">Set the standard charges for each class. These amounts pre-fill every student's bill. Transportation is billed only to students who use the service.</p>
+      <p className="mb-3 text-sm text-slate-500">Set the standard charges for each class. Saving updates every existing bill in that class (monthly tuition and charges), and pre-fills new bills. Transportation is billed only to students who use the service.</p>
       <Table>
         <THead>
           <TR className="hover:bg-transparent">
