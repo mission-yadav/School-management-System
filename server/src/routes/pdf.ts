@@ -323,6 +323,103 @@ router.get('/intimation/:invoiceId', asyncHandler(async (req, res) => {
   });
 }));
 
+/** Draw one compact fee bill inside a quarter-A4 quadrant at (ox, oy). */
+function drawBillPanel(doc: PDFKit.PDFDocument, ox: number, oy: number, school: SchoolInfo, inv: any, period: BSPeriod) {
+  const QW = 297.64, PAD = 16;
+  const L = ox + PAD, R = ox + QW - PAD;
+  const nameFont = schoolNameFont(doc);
+
+  // letterhead
+  try { doc.image(LOGO_PATH, L, oy + 10, { fit: [34, 34] }); } catch { /* logo optional */ }
+  const hx = L + 42;
+  let ns = 12;
+  doc.font(nameFont).fontSize(ns);
+  while (ns > 7 && doc.widthOfString(school.name) > R - hx) { ns -= 0.5; doc.fontSize(ns); }
+  doc.fillColor(BRAND).font(nameFont).fontSize(ns).text(school.name, hx, oy + 12, { lineBreak: false });
+  doc.fillColor('#555').font('Helvetica').fontSize(6)
+    .text([school.address, school.pan && `PAN: ${school.pan}`, school.phone && `Contact: ${school.phone}`].filter(Boolean).join('  |  '), hx, oy + 14 + ns, { width: R - hx, lineBreak: false });
+  doc.moveTo(L, oy + 52).lineTo(R, oy + 52).lineWidth(1.2).strokeColor(BRAND).stroke();
+  doc.lineWidth(1).fillColor('black');
+
+  let y = oy + 58;
+  doc.fillColor(BRAND).font('Helvetica-Bold').fontSize(10).text('FEE BILL', L, y, { width: R - L, align: 'center' });
+  doc.fillColor('black'); y += 15;
+  doc.font('Helvetica').fontSize(7).fillColor('#555')
+    .text(`Bill No: SMS-${String(inv.id).padStart(5, '0')}`, L, y)
+    .text(`Date: ${bsDate(inv.createdAt)}`, L, y, { width: R - L, align: 'right' });
+  doc.fillColor('black'); y += 12;
+
+  const info: [string, string][] = [
+    ['Student', inv.student.name], ['Class', inv.student.class?.name || '—'],
+    ['IEMIS ID', inv.student.iemis || '—'], ['Fee For', upToLabel(period)],
+  ];
+  doc.fontSize(7.5);
+  for (const [k, v] of info) { doc.font('Helvetica-Bold').text(`${k}: `, L, y, { continued: true }).font('Helvetica').text(v); y += 10.5; }
+  y += 3;
+
+  const gross = inv.items.reduce((a: number, i: any) => a + i.amount, 0);
+  const total = gross + inv.fine - inv.discount;
+  const settled = inv.payments.reduce((a: number, p: any) => a + p.amount + (p.less || 0), 0);
+  const rowH = 12, colX = R - 72, border = '#c9c9d6';
+  const gridRow = (label: string, amount: string, o: { header?: boolean; fill?: string; bold?: boolean; color?: string } = {}) => {
+    const bg = o.header ? '#eef0f7' : o.fill || null;
+    if (bg) { doc.rect(L, y, colX - L, rowH).fillAndStroke(bg, border); doc.rect(colX, y, R - colX, rowH).fillAndStroke(bg, border); }
+    else { doc.rect(L, y, colX - L, rowH).stroke(border); doc.rect(colX, y, R - colX, rowH).stroke(border); }
+    doc.font(o.bold || o.header ? 'Helvetica-Bold' : 'Helvetica').fontSize(7.5).fillColor(o.color || (o.header ? BRAND : 'black'));
+    doc.text(label, L + 4, y + 3, { width: colX - L - 8, lineBreak: false });
+    doc.text(amount, colX + 2, y + 3, { width: R - colX - 6, align: 'right', lineBreak: false });
+    doc.fillColor('black');
+    y += rowH;
+  };
+
+  gridRow('Description', 'Amount (Rs.)', { header: true });
+  for (const it of particularLines(inv.items, period)) gridRow(it.label, it.amount.toLocaleString('en-IN'), { bold: it.label === 'Previous Dues' });
+  if (inv.fine) gridRow('Fine', inv.fine.toLocaleString('en-IN'));
+  if (inv.discount) gridRow('Less', `- ${inv.discount.toLocaleString('en-IN')}`, { color: '#b91c1c' });
+  gridRow('Grand Total', total.toLocaleString('en-IN'), { fill: '#eeedf8', bold: true, color: BRAND });
+  if (settled) gridRow('Paid / Adjusted', settled.toLocaleString('en-IN'), { bold: true, color: 'green' });
+  gridRow('Balance Due', (total - settled).toLocaleString('en-IN'), { bold: true, color: total - settled > 0 ? 'red' : 'green' });
+
+  doc.font('Helvetica').fontSize(6.5).fillColor('#777')
+    .text('This is a fee bill, not a receipt. Please clear the balance by the due date.', L, y + 4, { width: R - L });
+  doc.fillColor('black').font('Helvetica').fontSize(7)
+    .text('__________________', R - 110, oy + 420.94 - 26, { width: 110, align: 'center' })
+    .text('Accountant', R - 110, oy + 420.94 - 16, { width: 110, align: 'center' });
+}
+
+/** GET /api/pdf/bills?ids=1,2,3 — many fee bills laid out 4-per-A4 sheet (2x2), for A4 printers. */
+router.get('/bills', asyncHandler(async (req, res) => {
+  const ids = String(req.query.ids || '').split(',').map((s) => Number(s.trim())).filter((n) => Number.isInteger(n) && n > 0).slice(0, 400);
+  if (!ids.length) throw new AppError(400, 'ids query param required (comma-separated invoice ids)');
+  const school = await getSchool();
+  const period = await getBillingPeriod();
+  const invoices = await prisma.feeInvoice.findMany({
+    where: { id: { in: ids } },
+    include: { items: true, payments: true, student: { include: { class: { select: { name: true } } } } },
+    orderBy: { student: { name: 'asc' } },
+  });
+  if (!invoices.length) throw new AppError(404, 'No bills found');
+
+  const QW = 297.64, QH = 420.94;
+  streamPdf(res, `bills-4up-${invoices.length}.pdf`, (doc) => {
+    const W = doc.page.width, H = doc.page.height;
+    const quad = [[0, 0], [QW, 0], [0, QH], [QW, QH]];
+    invoices.forEach((inv, i) => {
+      const slot = i % 4;
+      if (i > 0 && slot === 0) doc.addPage();
+      const [ox, oy] = quad[slot];
+      drawBillPanel(doc, ox, oy, school, inv, period);
+      // cut guides once per page (on the last slot or last bill)
+      if (slot === 3 || i === invoices.length - 1) {
+        doc.save().dash(3, { space: 3 }).lineWidth(0.5).strokeColor('#bbbbbb');
+        doc.moveTo(QW, 0).lineTo(QW, H).stroke();
+        doc.moveTo(0, QH).lineTo(W, QH).stroke();
+        doc.undash().restore();
+      }
+    });
+  }, { size: 'A4', margin: 0 });
+}));
+
 /** GET /api/pdf/audit — NFRS Income & Expenditure Statement + Balance Sheet */
 router.get('/audit', asyncHandler(async (_req, res) => {
   const school = await getSchool();

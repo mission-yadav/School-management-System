@@ -315,7 +315,16 @@ function InvoicesTab() {
         </Select>
         <SearchModeToggle value={listBy} onChange={setListBy} />
         <Input className="w-56" placeholder={searchPlaceholder(listBy)} value={listSearch} onChange={(e) => setListSearch(e.target.value)} inputMode={listBy === 'iemis' ? 'numeric' : 'text'} />
-        <span className="ml-auto text-xs text-slate-400">One running ledger per student · tuition added when you advance the billing month</span>
+        <Button
+          variant="outline"
+          size="sm"
+          className="ml-auto"
+          disabled={!filteredInvoices.length}
+          title="Prints the listed bills 4 to an A4 sheet — no A6 paper needed; cut along the dashed lines"
+          onClick={() => setPreview({ url: `/pdf/bills?ids=${filteredInvoices.map((r: any) => r.id).join(',')}`, filename: 'bills-4up.pdf', title: `Fee Bills · 4 per A4 (${filteredInvoices.length})` })}
+        >
+          Print bills · 4/sheet
+        </Button>
       </div>
 
       {loading ? <Loading /> : <DataTable columns={columns} rows={filteredInvoices} />}
