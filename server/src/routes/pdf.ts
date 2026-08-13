@@ -273,54 +273,13 @@ router.get('/intimation/:invoiceId', asyncHandler(async (req, res) => {
   if (!inv) throw new AppError(404, 'Invoice not found');
   const school = await getSchool();
   const period = await getBillingPeriod();
-  const gross = inv.items.reduce((a, i) => a + i.amount, 0);
-  const total = gross + inv.fine - inv.discount;
-  const paid = inv.payments.reduce((a, p) => a + p.amount, 0);
-  const settled = paid + inv.payments.reduce((a, p) => a + (p.less || 0), 0); // cash + concessions
 
+  // Quarter-A4 (A6) so a single bill always prints at 1/4 sheet — same compact
+  // panel used by the 4-per-A4 batch sheet.
   streamPdf(res, `intimation-${inv.student.iemis || inv.student.admissionNo}.pdf`, (doc) => {
-    let y = letterhead(doc, school);
-    y = heading(doc, 'Fee Intimation Card', y);
-    doc.fontSize(10).fillColor('#555')
-      .text(`Intimation No: SMS-${String(inv.id).padStart(5, '0')}`, 50, y)
-      .text(`Date: ${bsDate(inv.createdAt)}`, 50, y, { align: 'right' });
-    doc.fillColor('black').fontSize(12);
-
-    let dy = y + 30;
-    const info: [string, string][] = [
-      ['Student', inv.student.name], ['IEMIS ID', inv.student.iemis || '—'],
-      ['Class', inv.student.class?.name || '—'], ['Fee For', upToLabel(period)],
-      ...(inv.dueDate ? [['Due Date', bsDate(inv.dueDate)] as [string, string]] : []),
-    ];
-    for (const [k, v] of info) { doc.font('Helvetica-Bold').text(`${k}: `, 50, dy, { continued: true }).font('Helvetica').text(v); dy += 20; }
-
-    dy += 10;
-    // bordered grid: Particulars | Amount
-    const L = 50, R = doc.page.width - 50, colX = R - 130, rowH = 22, border = '#c9c9d6';
-    const gridRow = (label: string, amount: string, o: { header?: boolean; fill?: string; bold?: boolean; color?: string } = {}) => {
-      const bg = o.header ? '#eef0f7' : o.fill || null;
-      if (bg) { doc.rect(L, dy, colX - L, rowH).fillAndStroke(bg, border); doc.rect(colX, dy, R - colX, rowH).fillAndStroke(bg, border); }
-      else { doc.rect(L, dy, colX - L, rowH).stroke(border); doc.rect(colX, dy, R - colX, rowH).stroke(border); }
-      doc.font(o.bold || o.header ? 'Helvetica-Bold' : 'Helvetica').fontSize(11).fillColor(o.color || (o.header ? BRAND : 'black'));
-      doc.text(label, L + 8, dy + 6, { width: colX - L - 16, lineBreak: false });
-      doc.text(amount, colX + 4, dy + 6, { width: R - colX - 10, align: 'right', lineBreak: false });
-      doc.fillColor('black');
-      dy += rowH;
-    };
-
-    gridRow('Particulars', 'Amount (Rs.)', { header: true });
-    for (const it of particularLines(inv.items, period)) gridRow(it.label, it.amount.toLocaleString('en-IN'), { bold: it.label === 'Previous Dues' });
-    gridRow('Sub Total', gross.toLocaleString('en-IN'), { bold: true });
-    if (inv.fine) gridRow('Fine', inv.fine.toLocaleString('en-IN'));
-    if (inv.discount) gridRow('Less', `- ${inv.discount.toLocaleString('en-IN')}`, { color: '#b91c1c' });
-    gridRow('Grand Total', total.toLocaleString('en-IN'), { fill: '#eeedf8', bold: true, color: BRAND });
-    gridRow('Paid / Adjusted', settled.toLocaleString('en-IN'), { bold: true, color: 'green' });
-    gridRow('Balance Due', (total - settled).toLocaleString('en-IN'), { bold: true, color: total - settled > 0 ? 'red' : 'green' });
-    doc.fillColor('black').font('Helvetica').fontSize(9)
-      .text('Note: This is a fee intimation, not a receipt. Please clear the balance due by the due date. A receipt will be issued on payment.', 50, dy + 14, { width: doc.page.width - 100 });
-    doc.fontSize(11);
-    signatureBlock(doc, 'Accountant');
-  });
+    doc.page.margins.bottom = 0;
+    drawBillPanel(doc, 0, 0, school, inv, period);
+  }, { size: QUARTER_A4, margin: 0 });
 }));
 
 /** Draw one compact fee bill inside a quarter-A4 quadrant at (ox, oy). */
