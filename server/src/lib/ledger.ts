@@ -152,7 +152,7 @@ export async function ensureLedger(studentId: number, period?: BSPeriod): Promis
     }
   }
 
-  if (toCreate.length) await prisma.feeItem.createMany({ data: toCreate });
+  if (toCreate.length) await prisma.$transaction(toCreate.map((d) => prisma.feeItem.create({ data: d })));
   return inv.id;
 }
 

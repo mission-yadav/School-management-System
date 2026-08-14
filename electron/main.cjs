@@ -22,6 +22,15 @@ const dbPath = path.join(app.getPath('userData'), 'janaki-school.db');
 const dbUrl = 'file:' + dbPath.replace(/\\/g, '/');
 
 let serverProc = null;
+let serverLog = '';
+let serverExitCode = null;
+const logPath = path.join(app.getPath('userData'), 'server.log');
+
+function appendLog(s) {
+  serverLog += s;
+  if (serverLog.length > 20000) serverLog = serverLog.slice(-20000);
+  try { fs.appendFileSync(logPath, s); } catch { /* ignore */ }
+}
 
 function ensureDatabase() {
   if (!fs.existsSync(dbPath)) {
@@ -32,6 +41,7 @@ function ensureDatabase() {
 
 function startServer() {
   ensureDatabase();
+  try { fs.writeFileSync(logPath, `--- start ${new Date().toISOString()} ---\ndb=${dbUrl}\nentry=${serverEntry}\n`); } catch { /* ignore */ }
   serverProc = fork(serverEntry, [], {
     cwd: serverDir,
     env: {
@@ -44,18 +54,20 @@ function startServer() {
     },
     stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
   });
-  serverProc.stdout.on('data', (d) => console.log('[server]', String(d).trim()));
-  serverProc.stderr.on('data', (d) => console.error('[server]', String(d).trim()));
-  serverProc.on('exit', (code) => { if (code) console.error('server exited with', code); });
+  serverProc.stdout.on('data', (d) => appendLog('[out] ' + String(d)));
+  serverProc.stderr.on('data', (d) => appendLog('[err] ' + String(d)));
+  serverProc.on('exit', (code) => { serverExitCode = code == null ? -1 : code; appendLog(`[exit] code=${serverExitCode}\n`); });
 }
 
 function waitForServer() {
   return new Promise((resolve, reject) => {
     const started = Date.now();
     const tick = () => {
+      // If the server process already died, surface its error immediately.
+      if (serverExitCode !== null) return reject(new Error(`server process exited (code ${serverExitCode}).\n\n${serverLog.slice(-1600)}`));
       http.get(`http://localhost:${PORT}/api/health`, (res) => { res.resume(); resolve(); })
         .on('error', () => {
-          if (Date.now() - started > 30000) reject(new Error('server did not start in time'));
+          if (Date.now() - started > 60000) reject(new Error(`server did not start in time.\n\n${serverLog.slice(-1600)}`));
           else setTimeout(tick, 300);
         });
     };
@@ -91,7 +103,7 @@ app.whenReady().then(async () => {
     await waitForServer();
     createWindow();
   } catch (err) {
-    dialog.showErrorBox('Startup failed', String(err && err.stack || err));
+    dialog.showErrorBox('Startup failed', `${String(err && err.message || err)}\n\nFull log: ${logPath}`);
     app.quit();
   }
 });

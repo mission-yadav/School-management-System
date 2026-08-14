@@ -66,7 +66,7 @@ router.put('/grades', requireRole('ADMIN'), asyncHandler(async (req, res) => {
   }));
   await prisma.$transaction([
     prisma.gradeScale.deleteMany({}),
-    prisma.gradeScale.createMany({ data }),
+    ...data.map((g) => prisma.gradeScale.create({ data: g })),
   ]);
   const updated = await prisma.gradeScale.findMany({ orderBy: { minPercent: 'desc' } });
   res.json(updated);
