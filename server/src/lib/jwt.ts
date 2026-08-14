@@ -1,6 +1,7 @@
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
-import type { Role } from '@prisma/client';
+
+export type Role = 'ADMIN' | 'TEACHER';
 
 const ACCESS_SECRET = process.env.JWT_ACCESS_SECRET || 'dev_access';
 const REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'dev_refresh';

@@ -1,6 +1,5 @@
 import type { Request, Response, NextFunction } from 'express';
-import type { Role } from '@prisma/client';
-import { verifyAccessToken, type AccessPayload } from '../lib/jwt.js';
+import { verifyAccessToken, type AccessPayload, type Role } from '../lib/jwt.js';
 import { AppError } from '../lib/http.js';
 
 declare global {

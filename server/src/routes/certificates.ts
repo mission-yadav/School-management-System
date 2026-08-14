@@ -33,7 +33,7 @@ router.post('/', requireRole('ADMIN'), asyncHandler(async (req, res) => {
   if (!student) throw new AppError(404, 'Student not found');
   const serialNo = `${type.slice(0, 3)}-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`;
   const cert = await prisma.certificate.create({
-    data: { studentId: Number(studentId), type, serialNo, issuedById: req.user!.id, dataJson: data || {} },
+    data: { studentId: Number(studentId), type, serialNo, issuedById: req.user!.id, dataJson: JSON.stringify(data || {}) },
   });
   res.status(201).json({ id: cert.id, serialNo: cert.serialNo });
 }));

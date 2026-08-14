@@ -9,5 +9,13 @@ build/
 
 # prisma / db
 server/prisma/*.db
+server/prisma/*.db-journal
+server/prisma/*.db-wal
+# exported real data (PII) — seeds the desktop build locally, never commit
+server/prisma/seed-data/
+
+# electron build output
+dist-electron/
+release/
 
 .DS_Store

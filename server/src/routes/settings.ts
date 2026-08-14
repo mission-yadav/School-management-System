@@ -22,7 +22,7 @@ router.get('/', asyncHandler(async (_req, res) => {
   const rows = await prisma.setting.findMany();
   const out: Record<string, any> = { ...DEFAULT_SETTINGS };
   for (const r of rows as any[]) {
-    out[r.key] = r.value;
+    try { out[r.key] = JSON.parse(r.value); } catch { out[r.key] = r.value; }
   }
   res.json(out);
 }));
@@ -37,15 +37,15 @@ router.put('/', requireRole('ADMIN'), asyncHandler(async (req, res) => {
     keys.map((key) =>
       prisma.setting.upsert({
         where: { key },
-        update: { value: body[key] as any },
-        create: { key, value: body[key] as any },
+        update: { value: JSON.stringify(body[key]) },
+        create: { key, value: JSON.stringify(body[key]) },
       })
     )
   );
   const rows = await prisma.setting.findMany();
   const out: Record<string, any> = { ...DEFAULT_SETTINGS };
   for (const r of rows as any[]) {
-    out[r.key] = r.value;
+    try { out[r.key] = JSON.parse(r.value); } catch { out[r.key] = r.value; }
   }
   res.json(out);
 }));

@@ -3,22 +3,23 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  // SQLite: embedded, zero-install — the app ships a single database file.
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
-// ============================================================ AUTH / USERS 
-enum Role {
-  ADMIN
-  TEACHER
-}
+// NOTE: SQLite (via Prisma) has no native enum / Json / Date types, so:
+//  - former enums are plain String columns (values unchanged, e.g. "ADMIN")
+//  - former Json columns are String columns holding JSON text
+//  - former @db.Date columns are plain DateTime
 
+// ============================================================ AUTH / USERS
 model User {
   id           Int      @id @default(autoincrement())
   name         String
   email        String   @unique
   passwordHash String
-  role         Role     @default(TEACHER)
+  role         String   @default("TEACHER") // ADMIN | TEACHER
   phone        String?
   photoUrl     String?
   active       Boolean  @default(true)
@@ -47,14 +48,7 @@ model RefreshToken {
   createdAt DateTime @default(now())
 }
 
-// ================================================================ PEOPLE 
-enum StudentStatus {
-  ACTIVE
-  SUSPENDED
-  ALUMNI
-  INACTIVE
-}
-
+// ================================================================ PEOPLE
 model Parent {
   id         Int       @id @default(autoincrement())
   name       String
@@ -93,7 +87,7 @@ model Student {
   transportFee   Float?        // per-student transport charge override (else class default)
   feeFree        Boolean       @default(false)  // if true, monthly tuition fee is waived
   annualExempt   Boolean       @default(false)  // if true, the yearly annual charge is not applied
-  status         StudentStatus @default(ACTIVE)
+  status         String        @default("ACTIVE") // ACTIVE | SUSPENDED | ALUMNI | INACTIVE
   admissionDate  DateTime      @default(now())
   createdAt      DateTime      @default(now())
 
@@ -123,7 +117,7 @@ model Staff {
   createdAt   DateTime @default(now())
 }
 
-// ============================================================== ACADEMICS 
+// ============================================================== ACADEMICS
 model Class {
   id             Int       @id @default(autoincrement())
   name           String    @unique       // e.g. "Grade 10"
@@ -198,15 +192,7 @@ model TimetableSlot {
   @@unique([classId, day, period])
 }
 
-// ============================================================= ADMISSIONS 
-enum AdmissionStatus {
-  PENDING
-  APPROVED
-  WAITLIST
-  REJECTED
-  ENROLLED
-}
-
+// ============================================================= ADMISSIONS
 model AdmissionRequest {
   id            Int             @id @default(autoincrement())
   applicantName String
@@ -220,45 +206,31 @@ model AdmissionRequest {
   entranceScore Float?
   documentsVerified Boolean     @default(false)
   seatConfirmed Boolean         @default(false)
-  status        AdmissionStatus @default(PENDING)
+  status        String          @default("PENDING") // PENDING | APPROVED | WAITLIST | REJECTED | ENROLLED
   notes         String?
   createdAt     DateTime        @default(now())
 }
 
-// ============================================================= ATTENDANCE 
-enum AttendanceStatus {
-  PRESENT
-  ABSENT
-  LATE
-  HALF_DAY
-}
-
+// ============================================================= ATTENDANCE
 model StudentAttendance {
   id         Int              @id @default(autoincrement())
   student    Student          @relation(fields: [studentId], references: [id], onDelete: Cascade)
   studentId  Int
   classId    Int?
-  date       DateTime         @db.Date
-  status     AttendanceStatus @default(PRESENT)
+  date       DateTime
+  status     String           @default("PRESENT") // PRESENT | ABSENT | LATE | HALF_DAY
   markedBy   User?            @relation(fields: [markedById], references: [id], onDelete: SetNull)
   markedById Int?
 
   @@unique([studentId, date])
 }
 
-enum TeacherAttStatus {
-  PRESENT
-  ABSENT
-  LEAVE
-  HOLIDAY
-}
-
 model TeacherAttendance {
   id     Int              @id @default(autoincrement())
   user   User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   userId Int
-  date   DateTime         @db.Date
-  status TeacherAttStatus @default(PRESENT)
+  date   DateTime
+  status String           @default("PRESENT") // PRESENT | ABSENT | LEAVE | HOLIDAY
   note   String?
 
   @@unique([userId, date])
@@ -266,7 +238,7 @@ model TeacherAttendance {
 
 model Holiday {
   id    Int      @id @default(autoincrement())
-  date  DateTime @db.Date @unique
+  date  DateTime @unique
   title String
 }
 
@@ -274,24 +246,18 @@ model LeaveRequest {
   id       Int      @id @default(autoincrement())
   user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   userId   Int
-  fromDate DateTime @db.Date
-  toDate   DateTime @db.Date
+  fromDate DateTime
+  toDate   DateTime
   reason   String?
   status   String   @default("PENDING") // PENDING/APPROVED/REJECTED
   createdAt DateTime @default(now())
 }
 
-// =================================================================== FEES 
+// =================================================================== FEES
 model FeeCategory {
   id       Int        @id @default(autoincrement())
   name     String     @unique  // Tuition, Transport, Hostel, Exam, Library, Lab
   items    FeeItem[]
-}
-
-enum InvoiceStatus {
-  PENDING
-  PARTIAL
-  PAID
 }
 
 model FeeInvoice {
@@ -303,7 +269,7 @@ model FeeInvoice {
   dueDate      DateTime?
   discount     Float         @default(0)
   fine         Float         @default(0)
-  status       InvoiceStatus @default(PENDING)
+  status       String        @default("PENDING") // PENDING | PARTIAL | PAID
   isLedger     Boolean       @default(false)  // the student's running fee ledger
   createdAt    DateTime      @default(now())
 
@@ -323,20 +289,13 @@ model FeeItem {
   bsMonth    Int?         // 1 = Baisakh .. 12 = Chaitra
 }
 
-enum PaymentMethod {
-  CASH
-  CARD
-  UPI
-  BANK_TRANSFER
-}
-
 model Payment {
   id           Int           @id @default(autoincrement())
   invoice      FeeInvoice    @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   invoiceId    Int
   amount       Float
   less         Float         @default(0)  // concession given at collection time
-  method       PaymentMethod @default(CASH)
+  method       String        @default("CASH") // CASH | CARD | UPI | BANK_TRANSFER
   reference    String?
   receiptNo    String        @unique
   paidAt       DateTime      @default(now())
@@ -354,7 +313,7 @@ model Scholarship {
   note      String?
 }
 
-// ============================================================ EXAMINATION 
+// ============================================================ EXAMINATION
 model Exam {
   id           Int      @id @default(autoincrement())
   name         String
@@ -413,7 +372,7 @@ model GradeScale {
   gpa        Float
 }
 
-// ============================================================ FINANCE (EXPENSE / PAYROLL) 
+// ============================================================ FINANCE (EXPENSE / PAYROLL)
 model ExpenseCategory {
   id       Int       @id @default(autoincrement())
   name     String    @unique  // Electricity, Salary, Maintenance, Stationery, Fuel, Internet, Misc
@@ -433,7 +392,7 @@ model Expense {
   title      String
   amount     Float
   date       DateTime         @default(now())
-  method     PaymentMethod    @default(CASH)
+  method     String           @default("CASH") // CASH | CARD | UPI | BANK_TRANSFER
   note       String?
   category   ExpenseCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   categoryId Int?
@@ -441,14 +400,9 @@ model Expense {
   vendorId   Int?
 }
 
-enum EmployeeType {
-  TEACHER
-  STAFF
-}
-
 model Payslip {
   id           Int          @id @default(autoincrement())
-  employeeType EmployeeType
+  employeeType String       // TEACHER | STAFF
   refId        Int          // User.id or Staff.id
   employeeName String
   month        String       // "2026-08"
@@ -463,41 +417,25 @@ model Payslip {
   @@unique([employeeType, refId, month])
 }
 
-// =========================================================== CERTIFICATES 
-enum CertificateType {
-  BONAFIDE
-  CHARACTER
-  TRANSFER
-  STUDY
-  ID_CARD
-  FEE_RECEIPT
-}
-
+// =========================================================== CERTIFICATES
 model Certificate {
   id         Int             @id @default(autoincrement())
   student    Student         @relation(fields: [studentId], references: [id], onDelete: Cascade)
   studentId  Int
-  type       CertificateType
+  type       String          // BONAFIDE | CHARACTER | TRANSFER | STUDY | ID_CARD | FEE_RECEIPT
   serialNo   String          @unique
   issuedBy   User?           @relation(fields: [issuedById], references: [id], onDelete: SetNull)
   issuedById Int?
   issuedAt   DateTime        @default(now())
-  dataJson   Json?
+  dataJson   String?         // JSON text
 }
 
-// ============================================================ COMMS / MISC 
-enum NoticeAudience {
-  ALL
-  TEACHERS
-  STUDENTS
-  STAFF
-}
-
+// ============================================================ COMMS / MISC
 model Notice {
   id        Int            @id @default(autoincrement())
   title     String
   body      String
-  audience  NoticeAudience @default(ALL)
+  audience  String         @default("ALL") // ALL | TEACHERS | STUDENTS | STAFF
   class     Class?         @relation(fields: [classId], references: [id], onDelete: Cascade)
   classId   Int?
   author    User?          @relation(fields: [authorId], references: [id], onDelete: SetNull)
@@ -509,17 +447,17 @@ model Event {
   id          Int      @id @default(autoincrement())
   title       String
   description String?
-  date        DateTime @db.Date
+  date        DateTime
   type        String?  // Exam, Holiday, Meeting, Sports...
   createdAt   DateTime @default(now())
 }
 
 model Setting {
   key   String @id
-  value Json
+  value String // JSON text
 }
 
-// -------- minimal models to back Global Search stubs (Library / Transport) 
+// -------- minimal models to back Global Search stubs (Library / Transport)
 model Book {
   id       Int     @id @default(autoincrement())
   title    String

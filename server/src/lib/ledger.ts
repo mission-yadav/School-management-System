@@ -21,18 +21,19 @@ const BILLING_KEY = 'billingPeriod';
  *  month — the admin advances it manually. Initialised to the real current month on first use. */
 export async function getBillingPeriod(): Promise<BSPeriod> {
   const row = await prisma.setting.findUnique({ where: { key: BILLING_KEY } });
-  const v = row?.value as any;
+  let v: any = null;
+  try { v = row ? JSON.parse(row.value) : null; } catch { v = null; }
   if (v && typeof v.year === 'number' && typeof v.month === 'number' && v.month >= 1 && v.month <= 12) {
     return { year: v.year, month: v.month };
   }
   const now = currentBS();
-  await prisma.setting.upsert({ where: { key: BILLING_KEY }, update: { value: now as any }, create: { key: BILLING_KEY, value: now as any } });
-  return now;
+  return setBillingPeriod(now.year, now.month);
 }
 
 export async function setBillingPeriod(year: number, month: number): Promise<BSPeriod> {
   const p = { year, month };
-  await prisma.setting.upsert({ where: { key: BILLING_KEY }, update: { value: p as any }, create: { key: BILLING_KEY, value: p as any } });
+  const value = JSON.stringify(p);
+  await prisma.setting.upsert({ where: { key: BILLING_KEY }, update: { value }, create: { key: BILLING_KEY, value } });
   return p;
 }
 

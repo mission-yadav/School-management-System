@@ -38,7 +38,8 @@ router.use(authRequired);
 
 async function getSchool(): Promise<SchoolInfo> {
   const rows = await prisma.setting.findMany({ where: { key: { in: ['schoolName', 'address', 'phone', 'email', 'pan'] } } });
-  const map = Object.fromEntries(rows.map((r) => [r.key, r.value as any]));
+  const parse = (v: string) => { try { return JSON.parse(v); } catch { return v; } };
+  const map = Object.fromEntries(rows.map((r) => [r.key, parse(r.value)]));
   return {
     name: (map.schoolName as string) || 'Janaki Secondary School',
     address: (map.address as string) || 'Birgunj-3, Aadarshtole',

@@ -38,8 +38,10 @@ async function main() {
     phone: '9845186111', email: '', pan: '305741055', session: '2083', logoUrl: '/logo.png',
     theme: '#262081', emailConfig: { host: '', user: '' }, smsConfig: { provider: '', apiKey: '' },
   };
-  for (const [key, value] of Object.entries(settings))
-    await prisma.setting.upsert({ where: { key }, update: { value }, create: { key, value } });
+  for (const [key, value] of Object.entries(settings)) {
+    const v = JSON.stringify(value); // Setting.value is JSON text on SQLite
+    await prisma.setting.upsert({ where: { key }, update: { value: v }, create: { key, value: v } });
+  }
 
   // grade scale
   await prisma.gradeScale.deleteMany();
