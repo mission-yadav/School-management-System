@@ -7,7 +7,7 @@
   "private": true,
   "scripts": {
     "start": "electron .",
-    "dist:win": "electron-builder --win nsis --x64 --ia32"
+    "dist:win": "electron-builder --win nsis --x64"
   },
   "devDependencies": {
     "electron": "22.3.27",
@@ -16,21 +16,64 @@
   "build": {
     "appId": "np.edu.janaki.school",
     "productName": "Janaki School",
-    "directories": { "output": "../release" },
+    "directories": {
+      "output": "../release"
+    },
     "files": [
       "main.cjs",
       "build/**"
     ],
     "extraResources": [
-      { "from": "../server/dist", "to": "server/dist" },
-      { "from": "../server/package.json", "to": "server/package.json" },
-      { "from": "../server/prisma", "to": "server/prisma", "filter": ["**/*", "!seed-data/**", "!*.db-journal", "!*.db-wal", "!import-data.ts", "!seed.ts"] },
-      { "from": "../server/node_modules", "to": "server/node_modules", "filter": ["**/*", "!.bin/**", "!.cache/**", "!tsx/**", "!typescript/**", "!prisma/build/**", "!@prisma/engines/**", "!**/*.md", "!**/*.ts"] },
-      { "from": "../client/dist", "to": "client/dist" }
+      {
+        "from": "../server/dist",
+        "to": "server/dist"
+      },
+      {
+        "from": "../server/package.json",
+        "to": "server/package.json"
+      },
+      {
+        "from": "../server/prisma",
+        "to": "server/prisma",
+        "filter": [
+          "**/*",
+          "!seed-data/**",
+          "!*.db-journal",
+          "!*.db-wal",
+          "!import-data.ts",
+          "!seed.ts"
+        ]
+      },
+      {
+        "from": "../server/node_modules",
+        "to": "server/node_modules",
+        "filter": [
+          "**/*",
+          "!.bin/**",
+          "!.cache/**",
+          "!tsx/**",
+          "!typescript/**",
+          "!prisma/build/**",
+          "!@prisma/engines/**",
+          "!**/*.md",
+          "!**/*.ts"
+        ]
+      },
+      {
+        "from": "../client/dist",
+        "to": "client/dist"
+      }
     ],
     "asar": true,
     "win": {
-      "target": [{ "target": "nsis", "arch": ["x64", "ia32"] }],
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
       "icon": "build/icon.ico",
       "artifactName": "Janaki-School-Setup-${version}.${ext}"
     },
@@ -42,5 +85,10 @@
       "createStartMenuShortcut": true,
       "shortcutName": "Janaki School"
     }
+  },
+  "allowScripts": {
+    "electron@22.3.27": true,
+    "electron-builder@24.13.3": true,
+    "app-builder-bin@4.0.0": true
   }
 }

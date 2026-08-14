@@ -30,7 +30,11 @@ From the repo root, on macOS/Linux **or** Windows (Git Bash):
 
 This builds the client, compiles the server, generates the Prisma client with
 the **Windows** query engine, then runs electron-builder. The installer lands in
-`../release/` as `Janaki-School-Setup-1.0.0.exe` (x64 + 32-bit).
+`../release/` as `Janaki-School-Setup-1.0.0.exe` (64-bit).
+
+> **64-bit only.** Prisma ships no 32-bit Windows query engine, so the app needs
+> 64-bit Windows 7 or above. This is standard on essentially all Win7 machines
+> from ~2010 onward.
 
 Building the Windows installer **on a real Windows PC is recommended** — it's the
 most reliable, and it lets you smoke-test the result immediately.
@@ -43,8 +47,7 @@ most reliable, and it lets you smoke-test the result immediately.
   If the app starts but the database fails on a Windows 7 machine, the fix is to
   pin an older Prisma (e.g. `prisma@5.4`) which ships Win7-compatible engines, then
   rebuild. This only matters on genuine Win7; Windows 8.1/10/11 are fine.
-- 32-bit (`ia32`) output is included for old Win7 installs; drop it from
-  `package.json > build.win.target` if you only need 64-bit.
+- Only **64-bit Windows** is supported (Prisma has no 32-bit Windows engine).
 
 ## Run in development (from the repo)
 
