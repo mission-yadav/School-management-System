@@ -3,6 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import bcrypt from 'bcryptjs';
+import path from 'path';
 import prisma from './prisma.js';
 import { errorHandler } from './middleware/error.js';
 
@@ -56,6 +57,16 @@ app.use('/api/notices', noticeRoutes);
 app.use('/api/events', eventRoutes);
 app.use('/api/timetable', timetableRoutes);
 app.use('/api/pdf', pdfRoutes);
+
+// In the packaged desktop app, serve the built client and fall back to index.html (SPA).
+const clientDist = process.env.CLIENT_DIST;
+if (clientDist) {
+  app.use(express.static(clientDist));
+  app.use((req, res, next) => {
+    if (req.path.startsWith('/api')) return next();
+    res.sendFile(path.join(clientDist, 'index.html'));
+  });
+}
 
 app.use(errorHandler);
 
