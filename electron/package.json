@@ -29,6 +29,10 @@
         "to": "server/dist"
       },
       {
+        "from": "../server/assets",
+        "to": "server/assets"
+      },
+      {
         "from": "../server/package.json",
         "to": "server/package.json"
       },

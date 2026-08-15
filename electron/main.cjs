@@ -85,9 +85,18 @@ function createWindow() {
     autoHideMenuBar: true,
     title: 'Janaki Secondary School',
     icon: path.join(__dirname, 'build', 'icon.ico'),
-    webPreferences: { contextIsolation: true, nodeIntegration: false },
+    // plugins:true enables Chromium's built-in PDF viewer so <iframe>/<embed> PDFs render.
+    webPreferences: { contextIsolation: true, nodeIntegration: false, plugins: true },
   });
   win.once('ready-to-show', () => win.show());
+
+  // Save PDF downloads straight to the Downloads folder and reveal them.
+  win.webContents.session.on('will-download', (_e, item) => {
+    const target = path.join(app.getPath('downloads'), item.getFilename());
+    item.setSavePath(target);
+    item.once('done', (_ev, state) => { if (state === 'completed') shell.showItemInFolder(target); });
+  });
+
   win.loadURL(`http://localhost:${PORT}`);
   // open external links (e.g. downloaded PDFs) in the system browser, not a new window
   win.webContents.setWindowOpenHandler(({ url }) => {
