@@ -8,6 +8,7 @@ import { ensureLedger } from '../lib/ledger.js';
 const router = Router();
 router.use(authRequired);
 
+const IEMIS_PREFIX = '340200133'; // Janaki Secondary School's IEMIS school code
 // normalize a class label for matching ("L.K.G." / "LKG" / " lkg " all match)
 const normClass = (s: string) => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 // canonical display name + promotion order for a roster's class label
@@ -53,7 +54,10 @@ router.post('/import', requireRole('ADMIN'), asyncHandler(async (req, res) => {
     const sectionId = cls.sections[0]?.id ?? null;
 
     for (const s of (file.students || [])) {
-      const iemis = String(s.student_id || '').trim() || null;
+      // full IEMIS = school prefix + the student's unique last-7 digits (rosters vary:
+      // some give only the 7 digits, some the full 16, some a typo'd prefix or a space)
+      const digits = String(s.student_id || '').replace(/\D/g, '');
+      const iemis = digits ? IEMIS_PREFIX + digits.slice(-7) : null;
       const name = String(s.full_name || '').replace(/\s+/g, ' ').trim();
       if (!name) { skipped++; continue; }
       if (iemis && (await prisma.student.findFirst({ where: { iemis } }))) { skipped++; continue; }
