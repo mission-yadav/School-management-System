@@ -189,7 +189,7 @@ router.get('/receipt/:paymentId', asyncHandler(async (req, res) => {
   // A4 sheet, one quarter filled (top-left) with the receipt card, rest blank, bordered + cut guides.
   streamPdf(res, `${payment.receiptNo}.pdf`, (doc) => {
     drawReceiptPanel(doc, 0, 0, school, payment, inv, period);
-    sheetFrame(doc);
+    sheetFrame(doc, 1);
   }, { size: 'A4', margin: 0 });
 }));
 
@@ -208,7 +208,7 @@ router.get('/intimation/:invoiceId', asyncHandler(async (req, res) => {
   // bold card borders and cut guides. Always prints at 1/4 size.
   streamPdf(res, `intimation-${inv.student.iemis || inv.student.admissionNo}.pdf`, (doc) => {
     drawBillPanel(doc, 0, 0, school, inv, period);
-    sheetFrame(doc);
+    sheetFrame(doc, 1);
   }, { size: 'A4', margin: 0 });
 }));
 
@@ -217,21 +217,22 @@ const QW = 297.64, QH = 420.94; // quarter-A4 quadrant size
 /** Compact branded letterhead for a quadrant panel. Returns the y to continue from. */
 function panelHead(doc: PDFKit.PDFDocument, ox: number, oy: number, L: number, R: number, school: SchoolInfo, reg: string) {
   const nameFont = schoolNameFont(doc);
-  try { doc.image(LOGO_PATH, L, oy + 10, { fit: [38, 38] }); } catch { /* logo optional */ }
+  const top = oy + 20; // clear of the card border
+  try { doc.image(LOGO_PATH, L, top, { fit: [38, 38] }); } catch { /* logo optional */ }
   const hx = L + 46;
   let ns = 13;
   doc.font(nameFont).fontSize(ns);
   while (ns > 7 && doc.widthOfString(school.name) > R - hx) { ns -= 0.5; doc.fontSize(ns); }
-  doc.fillColor(BRAND).font(nameFont).fontSize(ns).text(school.name, hx, oy + 11, { lineBreak: false });
+  doc.fillColor(BRAND).font(nameFont).fontSize(ns).text(school.name, hx, top + 1, { lineBreak: false });
   // sub-line: as big as fits on one line within the panel width
   const sub = [school.address, school.pan && `PAN: ${school.pan}`, school.phone && `Contact: ${school.phone}`].filter(Boolean).join('  |  ');
   let ss = 7;
   doc.font(reg).fontSize(ss);
   while (ss > 5 && doc.widthOfString(sub) > R - hx) { ss -= 0.25; doc.fontSize(ss); }
-  doc.fillColor('#444').text(sub, hx, oy + 14 + ns, { width: R - hx, lineBreak: false });
-  doc.moveTo(L, oy + 54).lineTo(R, oy + 54).lineWidth(1.4).strokeColor(BRAND).stroke();
+  doc.fillColor('#444').text(sub, hx, top + 4 + ns, { width: R - hx, lineBreak: false });
+  doc.moveTo(L, top + 44).lineTo(R, top + 44).lineWidth(1.4).strokeColor(BRAND).stroke();
   doc.lineWidth(1).fillColor('black');
-  return oy + 60;
+  return top + 50;
 }
 
 /** Two-column student info block (Student/IEMIS left, Class/Fee For right). The right
@@ -363,11 +364,12 @@ function drawReceiptPanel(doc: PDFKit.PDFDocument, ox: number, oy: number, schoo
   panelSignature(doc, ox, oy, R, reg);
 }
 
-/** Bold border around each of the 4 quadrants + dashed cut guides down the middle. */
-function sheetFrame(doc: PDFKit.PDFDocument) {
+/** Bold border around the first `filled` quadrants (blank ones get none) + dashed cut guides. */
+function sheetFrame(doc: PDFKit.PDFDocument, filled = 4) {
   const W = doc.page.width, H = doc.page.height;
+  const quads = [[0, 0], [QW, 0], [0, QH], [QW, QH]];
   doc.save().lineWidth(2).strokeColor(BRAND);
-  for (const [ox, oy] of [[0, 0], [QW, 0], [0, QH], [QW, QH]]) doc.rect(ox + 10, oy + 10, QW - 20, QH - 20).stroke();
+  for (let i = 0; i < filled; i++) { const [ox, oy] = quads[i]; doc.rect(ox + 10, oy + 10, QW - 20, QH - 20).stroke(); }
   doc.restore();
   doc.save().dash(3, { space: 3 }).lineWidth(0.6).strokeColor('#aaaaaa');
   doc.moveTo(QW, 0).lineTo(QW, H).stroke();
@@ -390,13 +392,12 @@ router.get('/bills', asyncHandler(async (req, res) => {
 
   streamPdf(res, `bills-4up-${invoices.length}.pdf`, (doc) => {
     const quad = [[0, 0], [QW, 0], [0, QH], [QW, QH]];
-    invoices.forEach((inv, i) => {
-      const slot = i % 4;
-      if (i > 0 && slot === 0) doc.addPage();
-      if (slot === 0) sheetFrame(doc); // borders + cut guides for this page
-      const [ox, oy] = quad[slot];
-      drawBillPanel(doc, ox, oy, school, inv, period);
-    });
+    for (let p = 0; p * 4 < invoices.length; p++) {
+      if (p > 0) doc.addPage();
+      const chunk = invoices.slice(p * 4, p * 4 + 4);
+      sheetFrame(doc, chunk.length); // border only the filled cards on this page
+      chunk.forEach((inv, slot) => drawBillPanel(doc, quad[slot][0], quad[slot][1], school, inv, period));
+    }
   }, { size: 'A4', margin: 0 });
 }));
 
