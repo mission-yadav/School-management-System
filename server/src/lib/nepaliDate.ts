@@ -8,7 +8,7 @@ while (NepaliDate && typeof NepaliDate !== 'function' && NepaliDate.default) Nep
 /** Convert a Bikram Sambat date string ("2068-12-06") to an AD Date, or null if invalid. */
 export function bsToAd(s: string | null | undefined): Date | null {
   if (!s) return null;
-  const m = String(s).trim().match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+  const m = String(s).trim().match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/); // ignore any trailing time
   if (!m) return null;
   const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
   if (mo < 1 || mo > 12 || d < 1 || d > 32) return null;
