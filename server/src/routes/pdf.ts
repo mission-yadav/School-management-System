@@ -234,12 +234,29 @@ function panelHead(doc: PDFKit.PDFDocument, ox: number, oy: number, L: number, R
   return oy + 60;
 }
 
-/** Two-column student info block (Student/IEMIS left, Class/Fee For right). */
+/** Two-column student info block (Student/IEMIS left, Class/Fee For right). The right
+ *  column is aligned just past the widest left cell, and the font shrinks only as needed
+ *  so nothing overlaps or wraps (IEMIS IDs can be long). */
 function panelInfo(doc: PDFKit.PDFDocument, L: number, R: number, y: number, reg: string, bold: string,
   left: [string, string][], right: [string, string][]) {
-  const size = 9, colX = L + (R - L) * 0.5;
-  doc.fontSize(size);
+  const avail = R - L, gap = 12;
+  const cellW = (label: string, value: string, size: number) => {
+    doc.font(bold).fontSize(size); const w1 = doc.widthOfString(`${label}: `);
+    doc.font(reg).fontSize(size); return w1 + doc.widthOfString(value);
+  };
+  const measure = (size: number) => {
+    let maxL = 0, maxR = 0;
+    for (let i = 0; i < left.length; i++) {
+      maxL = Math.max(maxL, cellW(left[i][0], left[i][1], size));
+      if (right[i]) maxR = Math.max(maxR, cellW(right[i][0], right[i][1], size));
+    }
+    return { maxL, maxR };
+  };
+  let size = 9.5, m = measure(size);
+  while (size > 6.5 && m.maxL + gap + m.maxR > avail) { size -= 0.25; m = measure(size); }
+  const colX = L + m.maxL + gap;
   for (let i = 0; i < left.length; i++) {
+    doc.fontSize(size);
     doc.font(bold).fillColor('black').text(`${left[i][0]}: `, L, y, { continued: true }).font(reg).text(left[i][1], { lineBreak: false });
     if (right[i]) doc.font(bold).text(`${right[i][0]}: `, colX, y, { continued: true }).font(reg).text(right[i][1], { lineBreak: false });
     y += size + 5;
