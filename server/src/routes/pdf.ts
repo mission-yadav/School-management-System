@@ -2,7 +2,7 @@ import { Router } from 'express';
 import prisma from '../prisma.js';
 import { authRequired } from '../middleware/auth.js';
 import { asyncHandler, AppError, intParam } from '../lib/http.js';
-import { streamPdf, letterhead, heading, signatureBlock, schoolNameFont, BRAND, LOGO_PATH, QUARTER_A4, type SchoolInfo } from '../lib/pdf.js';
+import { streamPdf, letterhead, heading, signatureBlock, schoolNameFont, bodyFonts, BRAND, LOGO_PATH, type SchoolInfo } from '../lib/pdf.js';
 import { bsDate } from '../lib/nepaliDate.js';
 import { computeAudit, type Line } from '../lib/audit.js';
 import { getBillingPeriod, BS_MONTHS, type BSPeriod } from '../lib/ledger.js';
@@ -185,83 +185,12 @@ router.get('/receipt/:paymentId', asyncHandler(async (req, res) => {
   const school = await getSchool();
   const period = await getBillingPeriod();
   const inv = payment.invoice;
-  const total = inv.items.reduce((a, i) => a + i.amount, 0) + inv.fine - inv.discount;
-  // cumulative amounts up to and including this payment (so the receipt reflects the balance at that time)
-  const upto = inv.payments.filter((p) => p.id <= payment.id);
-  const paidToDate = upto.reduce((a, p) => a + p.amount, 0);
-  const concessionToDate = upto.reduce((a, p) => a + (p.less || 0), 0);
-  const settledToDate = paidToDate + concessionToDate;
 
-  const balanceDue = total - settledToDate;
-  // Quarter-A4 (A6) receipt — four fit on a single A4 sheet.
+  // A4 sheet, one quarter filled (top-left) with the receipt card, rest blank, bordered + cut guides.
   streamPdf(res, `${payment.receiptNo}.pdf`, (doc) => {
-    doc.page.margins.bottom = 0;   // keep everything on the single quarter page
-    const W = doc.page.width;      // 297.64
-    const H = doc.page.height;     // 420.94
-    const L = 14, R = W - 14;      // content bounds
-    const nameFont = schoolNameFont(doc);
-
-    // white compact letterhead — school name in the display font
-    const bandH = 54;
-    try { doc.image(LOGO_PATH, L, 8, { fit: [38, 38] }); } catch { /* logo optional */ }
-    const hx = L + 46;
-    let ns = 13;
-    doc.font(nameFont).fontSize(ns);
-    while (ns > 8 && doc.widthOfString(school.name) > R - hx) { ns -= 0.5; doc.fontSize(ns); }
-    doc.fillColor(BRAND).font(nameFont).fontSize(ns).text(school.name, hx, 10, { lineBreak: false });
-    doc.fillColor('#555').font('Helvetica').fontSize(6.5)
-      .text([school.address, school.pan && `PAN: ${school.pan}`, school.phone && `Contact: ${school.phone}`].filter(Boolean).join('   |   '), hx, 12 + ns, { width: R - hx, lineBreak: false });
-    doc.moveTo(L, bandH).lineTo(R, bandH).lineWidth(1.5).strokeColor(BRAND).stroke();
-    doc.lineWidth(1).fillColor('black');
-
-    let y = bandH + 8;
-    doc.fillColor(BRAND).font('Helvetica').fontSize(11).text('FEE RECEIPT', L, y, { width: R - L, align: 'center' });
-    doc.fillColor('black');
-    y += 17;
-
-    doc.font('Helvetica').fontSize(7.5).fillColor('#555')
-      .text(`Receipt No: ${payment.receiptNo}`, L, y)
-      .text(`Date: ${bsDate(payment.paidAt, true)}`, L, y, { width: R - L, align: 'right' });
-    doc.fillColor('black');
-    y += 13;
-
-    const info: [string, string][] = [
-      ['Student', inv.student.name], ['Class', inv.student.class?.name || '—'],
-      ['IEMIS ID', inv.student.iemis || '—'], ['Fee For', upToLabel(period)],
-    ];
-    doc.fontSize(8);
-    for (const [k, v] of info) { doc.font('Helvetica').text(`${k}: `, L, y, { continued: true }).font('Helvetica').text(v); y += 11; }
-    y += 4;
-
-    // bordered grid: Description | Amount
-    const rowH = 12.5, colX = R - 80, border = '#c9c9d6';
-    const gridRow = (label: string, amount: string, o: { header?: boolean; bold?: boolean; color?: string } = {}) => {
-      if (o.header) { doc.rect(L, y, colX - L, rowH).fillAndStroke('#eef0f7', border); doc.rect(colX, y, R - colX, rowH).fillAndStroke('#eef0f7', border); }
-      else { doc.rect(L, y, colX - L, rowH).stroke(border); doc.rect(colX, y, R - colX, rowH).stroke(border); }
-      doc.font(o.bold || o.header ? 'Helvetica' : 'Helvetica').fontSize(8).fillColor(o.color || (o.header ? BRAND : 'black'));
-      doc.text(label, L + 4, y + 3, { width: colX - L - 8, lineBreak: false });
-      doc.text(amount, colX + 2, y + 3, { width: R - colX - 6, align: 'right', lineBreak: false });
-      doc.fillColor('black');
-      y += rowH;
-    };
-
-    gridRow('Description', 'Amount (Rs.)', { header: true });
-    for (const it of particularLines(inv.items, period)) gridRow(it.label, it.amount.toLocaleString('en-IN'));
-    if (inv.discount) gridRow('Less', `- ${inv.discount.toLocaleString('en-IN')}`);
-    if (inv.fine) gridRow('Fine', inv.fine.toLocaleString('en-IN'));
-    gridRow('Invoice Total', total.toLocaleString('en-IN'), { bold: true });
-    gridRow('Amount Paid Now', payment.amount.toLocaleString('en-IN'), { bold: true, color: 'green' });
-    if (payment.less > 0) gridRow('Less (concession)', payment.less.toLocaleString('en-IN'), { bold: true, color: '#b91c1c' });
-    gridRow('Paid To Date', paidToDate.toLocaleString('en-IN'), { bold: true });
-    gridRow('Balance Due', balanceDue.toLocaleString('en-IN'), { bold: true, color: balanceDue > 0 ? 'red' : 'green' });
-
-    doc.font('Helvetica').fontSize(7).fillColor('#555').text(`Payment mode: ${payment.method}`, L, y + 3);
-
-    // signature pinned near the bottom of the quarter page
-    doc.fillColor('black').font('Helvetica').fontSize(7)
-      .text('___________________', R - 120, H - 26, { width: 120, align: 'center' })
-      .text('Accountant', R - 120, H - 16, { width: 120, align: 'center' });
-  }, { size: QUARTER_A4, margin: 14 });
+    drawReceiptPanel(doc, 0, 0, school, payment, inv, period);
+    sheetFrame(doc);
+  }, { size: 'A4', margin: 0 });
 }));
 
 /** GET /api/pdf/intimation/:invoiceId — fee Intimation Card (issued to demand payment) */
@@ -275,62 +204,79 @@ router.get('/intimation/:invoiceId', asyncHandler(async (req, res) => {
   const school = await getSchool();
   const period = await getBillingPeriod();
 
-  // Quarter-A4 (A6) so a single bill always prints at 1/4 sheet — same compact
-  // panel used by the 4-per-A4 batch sheet.
+  // A4 sheet laid out as 4 quarters — one filled (top-left), the rest blank, with
+  // bold card borders and cut guides. Always prints at 1/4 size.
   streamPdf(res, `intimation-${inv.student.iemis || inv.student.admissionNo}.pdf`, (doc) => {
-    doc.page.margins.bottom = 0;
     drawBillPanel(doc, 0, 0, school, inv, period);
-  }, { size: QUARTER_A4, margin: 0 });
+    sheetFrame(doc);
+  }, { size: 'A4', margin: 0 });
 }));
 
-/** Draw one compact fee bill inside a quarter-A4 quadrant at (ox, oy). */
-function drawBillPanel(doc: PDFKit.PDFDocument, ox: number, oy: number, school: SchoolInfo, inv: any, period: BSPeriod) {
-  const QW = 297.64, PAD = 16;
-  const L = ox + PAD, R = ox + QW - PAD;
-  const nameFont = schoolNameFont(doc);
+const QW = 297.64, QH = 420.94; // quarter-A4 quadrant size
 
-  // letterhead
-  try { doc.image(LOGO_PATH, L, oy + 10, { fit: [34, 34] }); } catch { /* logo optional */ }
-  const hx = L + 42;
-  let ns = 12;
+/** Compact branded letterhead for a quadrant panel. Returns the y to continue from. */
+function panelHead(doc: PDFKit.PDFDocument, ox: number, oy: number, L: number, R: number, school: SchoolInfo, reg: string) {
+  const nameFont = schoolNameFont(doc);
+  try { doc.image(LOGO_PATH, L, oy + 10, { fit: [38, 38] }); } catch { /* logo optional */ }
+  const hx = L + 46;
+  let ns = 13;
   doc.font(nameFont).fontSize(ns);
   while (ns > 7 && doc.widthOfString(school.name) > R - hx) { ns -= 0.5; doc.fontSize(ns); }
-  doc.fillColor(BRAND).font(nameFont).fontSize(ns).text(school.name, hx, oy + 12, { lineBreak: false });
-  doc.fillColor('#555').font('Helvetica').fontSize(6)
-    .text([school.address, school.pan && `PAN: ${school.pan}`, school.phone && `Contact: ${school.phone}`].filter(Boolean).join('  |  '), hx, oy + 14 + ns, { width: R - hx, lineBreak: false });
-  doc.moveTo(L, oy + 52).lineTo(R, oy + 52).lineWidth(1.2).strokeColor(BRAND).stroke();
+  doc.fillColor(BRAND).font(nameFont).fontSize(ns).text(school.name, hx, oy + 11, { lineBreak: false });
+  // sub-line: as big as fits on one line within the panel width
+  const sub = [school.address, school.pan && `PAN: ${school.pan}`, school.phone && `Contact: ${school.phone}`].filter(Boolean).join('  |  ');
+  let ss = 7;
+  doc.font(reg).fontSize(ss);
+  while (ss > 5 && doc.widthOfString(sub) > R - hx) { ss -= 0.25; doc.fontSize(ss); }
+  doc.fillColor('#444').text(sub, hx, oy + 14 + ns, { width: R - hx, lineBreak: false });
+  doc.moveTo(L, oy + 54).lineTo(R, oy + 54).lineWidth(1.4).strokeColor(BRAND).stroke();
   doc.lineWidth(1).fillColor('black');
+  return oy + 60;
+}
 
-  let y = oy + 58;
-  doc.fillColor(BRAND).font('Helvetica').fontSize(10).text('FEE BILL', L, y, { width: R - L, align: 'center' });
-  doc.fillColor('black'); y += 15;
-  doc.font('Helvetica').fontSize(7).fillColor('#555')
+/** Two-column student info block (Student/IEMIS left, Class/Fee For right). */
+function panelInfo(doc: PDFKit.PDFDocument, L: number, R: number, y: number, reg: string, bold: string,
+  left: [string, string][], right: [string, string][]) {
+  const size = 9, colX = L + (R - L) * 0.5;
+  doc.fontSize(size);
+  for (let i = 0; i < left.length; i++) {
+    doc.font(bold).fillColor('black').text(`${left[i][0]}: `, L, y, { continued: true }).font(reg).text(left[i][1], { lineBreak: false });
+    if (right[i]) doc.font(bold).text(`${right[i][0]}: `, colX, y, { continued: true }).font(reg).text(right[i][1], { lineBreak: false });
+    y += size + 5;
+  }
+  return y + 3;
+}
+
+/** Accountant signature, pulled up from the very bottom of the quadrant. */
+function panelSignature(doc: PDFKit.PDFDocument, ox: number, oy: number, R: number, reg: string) {
+  const sy = oy + QH - 96;
+  doc.fillColor('black').font(reg).fontSize(8)
+    .text('__________________', R - 120, sy, { width: 120, align: 'center' })
+    .text('Accountant', R - 120, sy + 11, { width: 120, align: 'center' });
+}
+
+/** Draw one intimation card inside a quarter-A4 quadrant at (ox, oy). */
+function drawBillPanel(doc: PDFKit.PDFDocument, ox: number, oy: number, school: SchoolInfo, inv: any, period: BSPeriod) {
+  const PAD = 18;
+  const L = ox + PAD, R = ox + QW - PAD;
+  const { reg, bold } = bodyFonts(doc);
+
+  let y = panelHead(doc, ox, oy, L, R, school, reg);
+  doc.fillColor(BRAND).font(bold).fontSize(13).text('INTIMATION CARD', L, y, { width: R - L, align: 'center' });
+  doc.fillColor('black'); y += 19;
+  doc.font(reg).fontSize(7.5).fillColor('#555')
     .text(`Bill No: SMS-${String(inv.id).padStart(5, '0')}`, L, y)
     .text(`Date: ${bsDate(inv.createdAt)}`, L, y, { width: R - L, align: 'right' });
-  doc.fillColor('black'); y += 12;
+  doc.fillColor('black'); y += 14;
 
-  const info: [string, string][] = [
-    ['Student', inv.student.name], ['Class', inv.student.class?.name || '—'],
-    ['IEMIS ID', inv.student.iemis || '—'], ['Fee For', upToLabel(period)],
-  ];
-  doc.fontSize(7.5);
-  for (const [k, v] of info) { doc.font('Helvetica').text(`${k}: `, L, y, { continued: true }).font('Helvetica').text(v); y += 10.5; }
-  y += 3;
+  y = panelInfo(doc, L, R, y, reg, bold,
+    [['Student', inv.student.name], ['IEMIS ID', inv.student.iemis || '—']],
+    [['Class', inv.student.class?.name || '—'], ['Fee For', upToLabel(period)]]);
 
   const gross = inv.items.reduce((a: number, i: any) => a + i.amount, 0);
   const total = gross + inv.fine - inv.discount;
   const settled = inv.payments.reduce((a: number, p: any) => a + p.amount + (p.less || 0), 0);
-  const rowH = 12, colX = R - 72, border = '#c9c9d6';
-  const gridRow = (label: string, amount: string, o: { header?: boolean; fill?: string; bold?: boolean; color?: string } = {}) => {
-    const bg = o.header ? '#eef0f7' : o.fill || null;
-    if (bg) { doc.rect(L, y, colX - L, rowH).fillAndStroke(bg, border); doc.rect(colX, y, R - colX, rowH).fillAndStroke(bg, border); }
-    else { doc.rect(L, y, colX - L, rowH).stroke(border); doc.rect(colX, y, R - colX, rowH).stroke(border); }
-    doc.font(o.bold || o.header ? 'Helvetica' : 'Helvetica').fontSize(7.5).fillColor(o.color || (o.header ? BRAND : 'black'));
-    doc.text(label, L + 4, y + 3, { width: colX - L - 8, lineBreak: false });
-    doc.text(amount, colX + 2, y + 3, { width: R - colX - 6, align: 'right', lineBreak: false });
-    doc.fillColor('black');
-    y += rowH;
-  };
+  const gridRow = billGridRow(doc, L, R, () => y, (ny) => { y = ny; }, reg, bold);
 
   gridRow('Description', 'Amount (Rs.)', { header: true });
   for (const it of particularLines(inv.items, period)) gridRow(it.label, it.amount.toLocaleString('en-IN'), { bold: it.label === 'Previous Dues' });
@@ -340,11 +286,76 @@ function drawBillPanel(doc: PDFKit.PDFDocument, ox: number, oy: number, school: 
   if (settled) gridRow('Paid / Adjusted', settled.toLocaleString('en-IN'), { bold: true, color: 'green' });
   gridRow('Balance Due', (total - settled).toLocaleString('en-IN'), { bold: true, color: total - settled > 0 ? 'red' : 'green' });
 
-  doc.font('Helvetica').fontSize(6.5).fillColor('#777')
-    .text('This is a fee bill, not a receipt. Please clear the balance by the due date.', L, y + 4, { width: R - L });
-  doc.fillColor('black').font('Helvetica').fontSize(7)
-    .text('__________________', R - 110, oy + 420.94 - 26, { width: 110, align: 'center' })
-    .text('Accountant', R - 110, oy + 420.94 - 16, { width: 110, align: 'center' });
+  doc.font(reg).fontSize(7).fillColor('#777')
+    .text('This is a fee intimation, not a receipt. Please clear the balance by the due date.', L, y + 5, { width: R - L });
+  panelSignature(doc, ox, oy, R, reg);
+}
+
+/** Shared bordered-grid row renderer for the bill/receipt panels (bigger, tighter, bold). */
+function billGridRow(doc: PDFKit.PDFDocument, L: number, R: number, getY: () => number, setY: (n: number) => void, reg: string, bold: string) {
+  const rowH = 14, colX = R - 78, border = '#c9c9d6';
+  return (label: string, amount: string, o: { header?: boolean; fill?: string; bold?: boolean; color?: string } = {}) => {
+    const y = getY();
+    const bg = o.header ? '#eef0f7' : o.fill || null;
+    if (bg) { doc.rect(L, y, colX - L, rowH).fillAndStroke(bg, border); doc.rect(colX, y, R - colX, rowH).fillAndStroke(bg, border); }
+    else { doc.rect(L, y, colX - L, rowH).stroke(border); doc.rect(colX, y, R - colX, rowH).stroke(border); }
+    doc.font(o.bold || o.header ? bold : reg).fontSize(9).fillColor(o.color || (o.header ? BRAND : 'black'));
+    doc.text(label, L + 5, y + 3, { width: colX - L - 9, lineBreak: false });
+    doc.text(amount, colX + 3, y + 3, { width: R - colX - 7, align: 'right', lineBreak: false });
+    doc.fillColor('black');
+    setY(y + rowH);
+  };
+}
+
+/** Draw one fee receipt inside a quarter-A4 quadrant at (ox, oy). */
+function drawReceiptPanel(doc: PDFKit.PDFDocument, ox: number, oy: number, school: SchoolInfo, payment: any, inv: any, period: BSPeriod) {
+  const PAD = 18;
+  const L = ox + PAD, R = ox + QW - PAD;
+  const { reg, bold } = bodyFonts(doc);
+
+  const total = inv.items.reduce((a: number, i: any) => a + i.amount, 0) + inv.fine - inv.discount;
+  const upto = inv.payments.filter((p: any) => p.id <= payment.id);
+  const paidToDate = upto.reduce((a: number, p: any) => a + p.amount, 0);
+  const settledToDate = paidToDate + upto.reduce((a: number, p: any) => a + (p.less || 0), 0);
+  const balanceDue = total - settledToDate;
+
+  let y = panelHead(doc, ox, oy, L, R, school, reg);
+  doc.fillColor(BRAND).font(bold).fontSize(13).text('FEE RECEIPT', L, y, { width: R - L, align: 'center' });
+  doc.fillColor('black'); y += 19;
+  doc.font(reg).fontSize(7.5).fillColor('#555')
+    .text(`Receipt No: ${payment.receiptNo}`, L, y)
+    .text(`Date: ${bsDate(payment.paidAt, true)}`, L, y, { width: R - L, align: 'right' });
+  doc.fillColor('black'); y += 14;
+
+  y = panelInfo(doc, L, R, y, reg, bold,
+    [['Student', inv.student.name], ['IEMIS ID', inv.student.iemis || '—']],
+    [['Class', inv.student.class?.name || '—'], ['Fee For', upToLabel(period)]]);
+
+  const gridRow = billGridRow(doc, L, R, () => y, (ny) => { y = ny; }, reg, bold);
+  gridRow('Description', 'Amount (Rs.)', { header: true });
+  for (const it of particularLines(inv.items, period)) gridRow(it.label, it.amount.toLocaleString('en-IN'), { bold: it.label === 'Previous Dues' });
+  if (inv.discount) gridRow('Less', `- ${inv.discount.toLocaleString('en-IN')}`);
+  if (inv.fine) gridRow('Fine', inv.fine.toLocaleString('en-IN'));
+  gridRow('Invoice Total', total.toLocaleString('en-IN'), { bold: true });
+  gridRow('Amount Paid Now', payment.amount.toLocaleString('en-IN'), { bold: true, color: 'green' });
+  if (payment.less > 0) gridRow('Less (concession)', payment.less.toLocaleString('en-IN'), { bold: true, color: '#b91c1c' });
+  gridRow('Paid To Date', paidToDate.toLocaleString('en-IN'), { bold: true });
+  gridRow('Balance Due', balanceDue.toLocaleString('en-IN'), { bold: true, color: balanceDue > 0 ? 'red' : 'green' });
+
+  doc.font(reg).fontSize(7).fillColor('#777').text(`Payment mode: ${payment.method}`, L, y + 5);
+  panelSignature(doc, ox, oy, R, reg);
+}
+
+/** Bold border around each of the 4 quadrants + dashed cut guides down the middle. */
+function sheetFrame(doc: PDFKit.PDFDocument) {
+  const W = doc.page.width, H = doc.page.height;
+  doc.save().lineWidth(2).strokeColor(BRAND);
+  for (const [ox, oy] of [[0, 0], [QW, 0], [0, QH], [QW, QH]]) doc.rect(ox + 10, oy + 10, QW - 20, QH - 20).stroke();
+  doc.restore();
+  doc.save().dash(3, { space: 3 }).lineWidth(0.6).strokeColor('#aaaaaa');
+  doc.moveTo(QW, 0).lineTo(QW, H).stroke();
+  doc.moveTo(0, QH).lineTo(W, QH).stroke();
+  doc.undash().restore();
 }
 
 /** GET /api/pdf/bills?ids=1,2,3 — many fee bills laid out 4-per-A4 sheet (2x2), for A4 printers. */
@@ -360,22 +371,14 @@ router.get('/bills', asyncHandler(async (req, res) => {
   });
   if (!invoices.length) throw new AppError(404, 'No bills found');
 
-  const QW = 297.64, QH = 420.94;
   streamPdf(res, `bills-4up-${invoices.length}.pdf`, (doc) => {
-    const W = doc.page.width, H = doc.page.height;
     const quad = [[0, 0], [QW, 0], [0, QH], [QW, QH]];
     invoices.forEach((inv, i) => {
       const slot = i % 4;
       if (i > 0 && slot === 0) doc.addPage();
+      if (slot === 0) sheetFrame(doc); // borders + cut guides for this page
       const [ox, oy] = quad[slot];
       drawBillPanel(doc, ox, oy, school, inv, period);
-      // cut guides once per page (on the last slot or last bill)
-      if (slot === 3 || i === invoices.length - 1) {
-        doc.save().dash(3, { space: 3 }).lineWidth(0.5).strokeColor('#bbbbbb');
-        doc.moveTo(QW, 0).lineTo(QW, H).stroke();
-        doc.moveTo(0, QH).lineTo(W, QH).stroke();
-        doc.undash().restore();
-      }
     });
   }, { size: 'A4', margin: 0 });
 }));

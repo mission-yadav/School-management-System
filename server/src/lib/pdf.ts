@@ -8,11 +8,23 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const LOGO_PATH = path.join(__dirname, '..', '..', 'assets', 'logo.png');
 const NAME_FONT_PATH = path.join(__dirname, '..', '..', 'assets', 'fonts', 'vipnagorgialla-bold.otf');
 
+const BODY_FONT_PATH = path.join(__dirname, '..', '..', 'assets', 'fonts', 'DejaVuSans.ttf');
+const BODY_BOLD_FONT_PATH = path.join(__dirname, '..', '..', 'assets', 'fonts', 'DejaVuSans-Bold.ttf');
+
 /** Register the Vipnagorgialla display font (used only for the school name). Falls back to
  *  Helvetica if the file is missing. Returns the font name to pass to doc.font(). */
 export function schoolNameFont(doc: PDFKit.PDFDocument): string {
   try { doc.registerFont('SchoolName', NAME_FONT_PATH); return 'SchoolName'; }
   catch { return 'Helvetica'; }
+}
+
+/** Embedded body fonts so bold actually renders on Windows PDF viewers (standard
+ *  Helvetica-Bold is not embedded and shows as boxes there). Returns { reg, bold }. */
+export function bodyFonts(doc: PDFKit.PDFDocument): { reg: string; bold: string } {
+  let reg = 'Helvetica', bold = 'Helvetica';
+  try { doc.registerFont('Body', BODY_FONT_PATH); reg = 'Body'; } catch { /* fallback */ }
+  try { doc.registerFont('BodyBold', BODY_BOLD_FONT_PATH); bold = 'BodyBold'; } catch { /* fallback */ }
+  return { reg, bold };
 }
 
 export interface SchoolInfo {
