@@ -213,11 +213,13 @@ router.get('/intimation/:invoiceId', asyncHandler(async (req, res) => {
 }));
 
 const QW = 297.64, QH = 420.94; // quarter-A4 quadrant size
+const CARD_MARGIN = 26; // card border inset from the quadrant edge (keeps it inside printers' unprintable margin)
+const CARD_PAD = 34;    // content inset (sits inside the border with a gap)
 
 /** Compact branded letterhead for a quadrant panel. Returns the y to continue from. */
 function panelHead(doc: PDFKit.PDFDocument, ox: number, oy: number, L: number, R: number, school: SchoolInfo, reg: string) {
   const nameFont = schoolNameFont(doc);
-  const top = oy + 20; // clear of the card border
+  const top = oy + CARD_PAD; // clear of the card border
   try { doc.image(LOGO_PATH, L, top, { fit: [38, 38] }); } catch { /* logo optional */ }
   const hx = L + 46;
   let ns = 13;
@@ -275,8 +277,7 @@ function panelSignature(doc: PDFKit.PDFDocument, ox: number, oy: number, R: numb
 
 /** Draw one intimation card inside a quarter-A4 quadrant at (ox, oy). */
 function drawBillPanel(doc: PDFKit.PDFDocument, ox: number, oy: number, school: SchoolInfo, inv: any, period: BSPeriod) {
-  const PAD = 18;
-  const L = ox + PAD, R = ox + QW - PAD;
+  const L = ox + CARD_PAD, R = ox + QW - CARD_PAD;
   const { reg, bold } = bodyFonts(doc);
 
   let y = panelHead(doc, ox, oy, L, R, school, reg);
@@ -327,8 +328,7 @@ function billGridRow(doc: PDFKit.PDFDocument, L: number, R: number, getY: () => 
 
 /** Draw one fee receipt inside a quarter-A4 quadrant at (ox, oy). */
 function drawReceiptPanel(doc: PDFKit.PDFDocument, ox: number, oy: number, school: SchoolInfo, payment: any, inv: any, period: BSPeriod) {
-  const PAD = 18;
-  const L = ox + PAD, R = ox + QW - PAD;
+  const L = ox + CARD_PAD, R = ox + QW - CARD_PAD;
   const { reg, bold } = bodyFonts(doc);
 
   const total = inv.items.reduce((a: number, i: any) => a + i.amount, 0) + inv.fine - inv.discount;
@@ -369,7 +369,7 @@ function sheetFrame(doc: PDFKit.PDFDocument, filled = 4) {
   const W = doc.page.width, H = doc.page.height;
   const quads = [[0, 0], [QW, 0], [0, QH], [QW, QH]];
   doc.save().lineWidth(2).strokeColor(BRAND);
-  for (let i = 0; i < filled; i++) { const [ox, oy] = quads[i]; doc.rect(ox + 10, oy + 10, QW - 20, QH - 20).stroke(); }
+  for (let i = 0; i < filled; i++) { const [ox, oy] = quads[i]; doc.rect(ox + CARD_MARGIN, oy + CARD_MARGIN, QW - 2 * CARD_MARGIN, QH - 2 * CARD_MARGIN).stroke(); }
   doc.restore();
   doc.save().dash(3, { space: 3 }).lineWidth(0.6).strokeColor('#aaaaaa');
   doc.moveTo(QW, 0).lineTo(QW, H).stroke();
