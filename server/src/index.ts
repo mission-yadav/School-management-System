@@ -81,7 +81,23 @@ async function ensureAdmin() {
   console.log(`✅ Seeded admin -> ${email} / ${password}`);
 }
 
+// Lightweight forward-only migrations for an already-installed (user-data) SQLite DB:
+// add any columns missing from an older database (only applied when absent).
+async function ensureSchema() {
+  const hasColumn = async (table: string, col: string) => {
+    const rows = await prisma.$queryRawUnsafe<any[]>(`PRAGMA table_info("${table}")`);
+    return Array.isArray(rows) && rows.some((r) => r.name === col);
+  };
+  const adds: [string, string, string][] = [
+    ['Class', 'order', 'ALTER TABLE "Class" ADD COLUMN "order" INTEGER NOT NULL DEFAULT 0'],
+  ];
+  for (const [table, col, sql] of adds) {
+    try { if (!(await hasColumn(table, col))) await prisma.$executeRawUnsafe(sql); } catch { /* ignore */ }
+  }
+}
+
 const PORT = Number(process.env.PORT || 4000);
-ensureAdmin()
+ensureSchema()
+  .then(ensureAdmin)
   .then(() => app.listen(PORT, () => console.log(`🚀 SMS API on http://localhost:${PORT}`)))
   .catch((e) => { console.error('Startup failed:', e); process.exit(1); });

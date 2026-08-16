@@ -173,52 +173,59 @@ export async function ensureAllLedgers(): Promise<void> {
 export async function syncClassLedgers(classId: number): Promise<number> {
   const cls = await prisma.class.findUnique({ where: { id: classId }, include: { feeStructure: true } });
   if (!cls) return 0;
-  const s = cls.feeStructure;
   const period = await getBillingPeriod();
   const students = await prisma.student.findMany({ where: { classId, status: 'ACTIVE' } });
+  for (const student of students) await syncOneLedger(student, cls.feeStructure, period);
+  return students.length;
+}
 
-  for (const student of students) {
-    const invId = await ensureLedger(student.id, period);
-    if (!invId) continue;
+/** Re-apply a single student's current class fee structure to their ledger (used on promotion). */
+export async function syncStudentLedger(studentId: number): Promise<void> {
+  const student = await prisma.student.findUnique({ where: { id: studentId }, include: { class: { include: { feeStructure: true } } } });
+  if (!student) return;
+  await syncOneLedger(student, student.class?.feeStructure ?? null, await getBillingPeriod());
+}
 
-    // month-wise tuition (leave any consolidated "Previous Dues" line alone)
-    const monthly = student.feeFree ? 0 : (s?.monthlyTuition ?? 0);
-    await prisma.feeItem.updateMany({
-      where: { invoiceId: invId, bsMonth: { not: null }, NOT: { description: 'Previous Dues' } },
-      data: { amount: monthly },
-    });
+async function syncOneLedger(student: any, s: any, period: BSPeriod): Promise<void> {
+  const invId = await ensureLedger(student.id, period);
+  if (!invId) return;
 
-    // Annual charge recurs yearly — update every year's line to the new amount (or remove
-    // all if set to 0 or the student is exempt). Never create here; ensureLedger adds them.
-    const annualAmt = s?.annualCharge ?? 0;
-    if (annualAmt > 0 && !student.annualExempt) await prisma.feeItem.updateMany({ where: { invoiceId: invId, description: 'Annual Charge' }, data: { amount: annualAmt } });
-    else await prisma.feeItem.deleteMany({ where: { invoiceId: invId, description: 'Annual Charge' } });
+  // month-wise tuition (leave any consolidated "Previous Dues" line alone)
+  const monthly = student.feeFree ? 0 : (s?.monthlyTuition ?? 0);
+  await prisma.feeItem.updateMany({
+    where: { invoiceId: invId, bsMonth: { not: null }, NOT: { description: 'Previous Dues' } },
+    data: { amount: monthly },
+  });
 
-    // canonical one-time headings -> desired amount (0 = remove)
-    const desired: [string, number][] = [
-      ['Computer Fee', s?.computerFee ?? 0],
-      ['Exam Fee', s?.examFee ?? 0],
-      ['Miscellaneous Charges', s?.miscCharge ?? 0],
-      ['Transportation Charge', student.usesTransport ? (student.transportFee ?? s?.transportFee ?? 0) : 0],
-    ];
-    for (const [desc, amt] of desired) {
-      const existing = await prisma.feeItem.findFirst({ where: { invoiceId: invId, bsMonth: null, description: desc } });
-      if (amt > 0) {
-        if (existing) await prisma.feeItem.update({ where: { id: existing.id }, data: { amount: amt } });
-        else await prisma.feeItem.create({ data: { invoiceId: invId, description: desc, amount: amt, bsYear: null, bsMonth: null } });
-      } else if (existing) {
-        await prisma.feeItem.delete({ where: { id: existing.id } });
-      }
-    }
+  // Annual charge recurs yearly — update every year's line to the new amount (or remove
+  // all if set to 0 or the student is exempt). Never create here; ensureLedger adds them.
+  const annualAmt = s?.annualCharge ?? 0;
+  if (annualAmt > 0 && !student.annualExempt) await prisma.feeItem.updateMany({ where: { invoiceId: invId, description: 'Annual Charge' }, data: { amount: annualAmt } });
+  else await prisma.feeItem.deleteMany({ where: { invoiceId: invId, description: 'Annual Charge' } });
 
-    // recompute status
-    const inv = await prisma.feeInvoice.findUnique({ where: { id: invId }, include: { items: true, payments: true } });
-    if (inv) {
-      const total = inv.items.reduce((a, i) => a + i.amount, 0) + inv.fine - inv.discount;
-      const settled = inv.payments.reduce((a, p) => a + p.amount + (p.less || 0), 0);
-      const status = settled <= 0 ? 'PENDING' : settled >= total ? 'PAID' : 'PARTIAL';
-      await prisma.feeInvoice.update({ where: { id: invId }, data: { status } });
+  // canonical one-time headings -> desired amount (0 = remove)
+  const desired: [string, number][] = [
+    ['Computer Fee', s?.computerFee ?? 0],
+    ['Exam Fee', s?.examFee ?? 0],
+    ['Miscellaneous Charges', s?.miscCharge ?? 0],
+    ['Transportation Charge', student.usesTransport ? (student.transportFee ?? s?.transportFee ?? 0) : 0],
+  ];
+  for (const [desc, amt] of desired) {
+    const existing = await prisma.feeItem.findFirst({ where: { invoiceId: invId, bsMonth: null, description: desc } });
+    if (amt > 0) {
+      if (existing) await prisma.feeItem.update({ where: { id: existing.id }, data: { amount: amt } });
+      else await prisma.feeItem.create({ data: { invoiceId: invId, description: desc, amount: amt, bsYear: null, bsMonth: null } });
+    } else if (existing) {
+      await prisma.feeItem.delete({ where: { id: existing.id } });
     }
   }
-  return students.length;
+
+  // recompute status
+  const inv = await prisma.feeInvoice.findUnique({ where: { id: invId }, include: { items: true, payments: true } });
+  if (inv) {
+    const total = inv.items.reduce((a, i) => a + i.amount, 0) + inv.fine - inv.discount;
+    const settled = inv.payments.reduce((a, p) => a + p.amount + (p.less || 0), 0);
+    const status = settled <= 0 ? 'PENDING' : settled >= total ? 'PAID' : 'PARTIAL';
+    await prisma.feeInvoice.update({ where: { id: invId }, data: { status } });
+  }
 }
