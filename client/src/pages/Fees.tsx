@@ -19,7 +19,7 @@ import { PdfPreviewDialog, type PdfPreview } from '@/components/PdfPreviewDialog
 import { FeeEditDialog } from '@/components/FeeEditDialog';
 import { StudentLedgerDialog } from '@/components/StudentLedgerDialog';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
-import { Pencil, FileText, Wallet, ScrollText, ChevronDown } from 'lucide-react';
+import { Pencil, FileText, Wallet, ScrollText, ChevronDown, Undo2 } from 'lucide-react';
 
 type Line = { key: string; label: string; amount: number | string; include: boolean; conditional?: string };
 
@@ -152,6 +152,7 @@ function InvoicesTab() {
   const [preview, setPreview] = useState<PdfPreview | null>(null);
   const [feeEdit, setFeeEdit] = useState<{ open: boolean; invoiceId: number | null; studentId: number | null }>({ open: false, invoiceId: null, studentId: null });
   const [ledgerId, setLedgerId] = useState<number | null>(null);
+  const [correctId, setCorrectId] = useState<number | null>(null);
 
   // ---- list filters ----
   const [listClass, setListClass] = useState('');
@@ -297,6 +298,7 @@ function InvoicesTab() {
           <DropdownMenuItem onSelect={() => setFeeEdit({ open: true, invoiceId: r.id, studentId: r.studentId })}><Pencil className="size-4" /> Edit Fees</DropdownMenuItem>
           <DropdownMenuItem onSelect={() => setPreview({ url: `/pdf/intimation/${r.id}`, filename: `intimation-${r.id}.pdf`, title: 'Fee Intimation Card' })}><FileText className="size-4" /> Intimation</DropdownMenuItem>
           {r.status !== 'PAID' && <DropdownMenuItem onSelect={() => startPay(r)}><Wallet className="size-4" /> Collect Payment</DropdownMenuItem>}
+          <DropdownMenuItem onSelect={() => setCorrectId(r.studentId)}><Undo2 className="size-4" /> Paid Correction</DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem onSelect={() => setLedgerId(r.studentId)}><ScrollText className="size-4" /> Record / Ledger</DropdownMenuItem>
         </DropdownMenuContent>
@@ -387,7 +389,77 @@ function InvoicesTab() {
         onClose={() => setLedgerId(null)}
         onPreview={setPreview}
       />
+
+      <PaidCorrectionDialog studentId={correctId} onClose={() => setCorrectId(null)} onChanged={reload} />
     </div>
+  );
+}
+
+/* ================================================ Paid correction (revert payments) */
+function PaidCorrectionDialog({ studentId, onClose, onChanged }: { studentId: number | null; onClose: () => void; onChanged: () => void }) {
+  const toast = useToast();
+  const [led, setLed] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState<number | null>(null);
+
+  async function load() {
+    if (studentId == null) return;
+    setLoading(true);
+    try { const { data } = await api.get(`/fees/ledger/${studentId}`); setLed(data); }
+    catch (e) { toast(apiError(e), 'error'); }
+    finally { setLoading(false); }
+  }
+  useEffect(() => { setLed(null); if (studentId != null) load(); /* eslint-disable-next-line */ }, [studentId]);
+
+  async function revert(p: any) {
+    if (!confirm(`Revert this collection of ${inr(p.amount)}${p.less ? ` (+ ${inr(p.less)} less)` : ''}? This removes the payment and increases the balance due.`)) return;
+    setBusy(p.id);
+    try {
+      await api.delete(`/fees/payment/${p.id}`);
+      toast('Payment reverted');
+      await load();
+      onChanged();
+    } catch (e) { toast(apiError(e), 'error'); }
+    finally { setBusy(null); }
+  }
+
+  const payments = led?.payments || [];
+  return (
+    <Dialog open={studentId !== null} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-lg" title="Paid Correction" footer={<Button variant="secondary" onClick={onClose}>Close</Button>}>
+        {loading ? <Loading label="Loading payments…" /> : (
+          <div className="space-y-3">
+            {led && (
+              <div className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2 text-sm">
+                <span className="font-medium text-slate-700">{led.student?.name}</span>
+                <span className="text-slate-500">Due <b className={led.totals?.due > 0 ? 'text-red-600' : 'text-green-600'}>{inr(led.totals?.due || 0)}</b></span>
+              </div>
+            )}
+            <p className="text-xs text-slate-400">Revert a wrongly-collected payment. It's removed one at a time and the balance due is recalculated.</p>
+            {payments.length === 0 ? (
+              <div className="py-8 text-center text-sm text-slate-400">No payments recorded for this student.</div>
+            ) : (
+              <div className="divide-y divide-slate-100 rounded-lg border border-slate-200">
+                {payments.map((p: any) => (
+                  <div key={p.id} className="flex items-center gap-3 px-3 py-2.5">
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-medium text-slate-800">
+                        {inr(p.amount)}{p.less ? <span className="text-slate-400"> + {inr(p.less)} less</span> : null}
+                        <span className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] uppercase text-slate-500">{p.method}</span>
+                      </div>
+                      <div className="text-xs text-slate-400">{p.receiptNo} · {formatBS(p.paidAt)}</div>
+                    </div>
+                    <Button size="sm" variant="outline" className="text-red-600" disabled={busy === p.id} onClick={() => revert(p)}>
+                      {busy === p.id ? 'Reverting…' : 'Revert'}
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 

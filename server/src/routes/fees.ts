@@ -375,6 +375,20 @@ router.post('/:id/pay', requireRole('ADMIN'), asyncHandler(async (req, res) => {
   res.json({ ok: true, receiptNo, paymentId: payment.id, status: newStatus });
 }));
 
+/** DELETE /api/fees/payment/:paymentId (ADMIN) — revert one collected payment (paid correction). */
+router.delete('/payment/:paymentId', requireRole('ADMIN'), asyncHandler(async (req, res) => {
+  const pid = intParam(req.params.paymentId, 'paymentId');
+  const payment = await prisma.payment.findUnique({ where: { id: pid } });
+  if (!payment) throw new AppError(404, 'Payment not found');
+  await prisma.payment.delete({ where: { id: pid } });
+  const inv = await prisma.feeInvoice.findUnique({ where: { id: payment.invoiceId }, include: { items: true, payments: true } });
+  if (inv) {
+    const { total, settled } = invoiceTotals(inv);
+    await prisma.feeInvoice.update({ where: { id: inv.id }, data: { status: statusFor(total, settled) } });
+  }
+  res.json({ ok: true, reverted: { amount: payment.amount, less: payment.less } });
+}));
+
 /** PUT /api/fees/:id (ADMIN) — edit title/due/discount(Less)/fine and (optionally) all line items */
 router.put('/:id', requireRole('ADMIN'), asyncHandler(async (req, res) => {
   const id = intParam(req.params.id);
