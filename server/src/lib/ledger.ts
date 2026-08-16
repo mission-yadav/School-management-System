@@ -128,9 +128,13 @@ export async function ensureLedger(studentId: number, period?: BSPeriod): Promis
   const monthly = student.feeFree ? 0 : (s?.monthlyTuition ?? 0);
   const toCreate: any[] = [];
 
-  const tuitionMonths = new Set(inv.items.filter(isTuitionLine).map((i) => `${i.bsYear}-${i.bsMonth}`));
+  // A month is "covered" (no new tuition line) if any dated line already sits there — including a
+  // carried-forward "Previous Dues" opening balance, whose figure already includes that month's
+  // tuition, so adding a separate tuition line would double-count it. Computer Fee lines are
+  // excluded so their monthly cadence never suppresses tuition.
+  const coveredMonths = new Set(inv.items.filter((i) => i.bsMonth && !isComputerLine(i)).map((i) => `${i.bsYear}-${i.bsMonth}`));
   for (let m = 1; m <= month; m++) {
-    if (!tuitionMonths.has(`${year}-${m}`))
+    if (!coveredMonths.has(`${year}-${m}`))
       toCreate.push({ invoiceId: inv.id, description: monthDesc(m, year, 'Tuition Fee'), amount: monthly, bsYear: year, bsMonth: m });
   }
 
