@@ -21,7 +21,8 @@ function particularLines(items: { description: string; amount: number; bsMonth?:
   const prevDues = items
     .filter((i) => isPrevDues(i) || (i.bsMonth && (i.bsYear! < year || (i.bsYear === year && i.bsMonth! < month))))
     .reduce((a, i) => a + i.amount, 0);
-  const currentTuition = items.filter((i) => !isPrevDues(i) && i.bsMonth === month && i.bsYear === year).sort((a, b) => a.bsMonth! - b.bsMonth!);
+  const cmp = (d: string) => (d.endsWith('Computer Fee') ? 1 : 0); // tuition before computer within a month
+  const currentTuition = items.filter((i) => !isPrevDues(i) && i.bsMonth === month && i.bsYear === year).sort((a, b) => (a.bsMonth! - b.bsMonth!) || (cmp(a.description) - cmp(b.description)));
   const ORDER = ['Annual Charge', 'Computer Fee', 'Transportation Charge', 'Exam Fee', 'Miscellaneous Charges'];
   const rank = (d: string) => { const i = ORDER.indexOf(d); return i < 0 ? 90 : i; };
   const headings = items.filter((i) => !i.bsMonth).sort((a, b) => rank(a.description) - rank(b.description));
@@ -412,7 +413,10 @@ function registerCells(inv: { items: { description: string; amount: number; bsMo
   const months: { y: number; m: number; amount: number }[] = [];
   for (const it of inv.items) {
     if (it.description === 'Previous Dues') continue;
-    if (it.bsMonth) { c.monthly += it.amount; months.push({ y: it.bsYear || 0, m: it.bsMonth, amount: it.amount }); continue; }
+    if (it.bsMonth) { // dated monthly lines: Computer Fee has its own column, everything else is tuition
+      if (it.description.endsWith('Computer Fee')) { c.computer += it.amount; continue; }
+      c.monthly += it.amount; months.push({ y: it.bsYear || 0, m: it.bsMonth, amount: it.amount }); continue;
+    }
     const k = LABELS[it.description]; if (k) c[k] += it.amount;
   }
   months.sort((a, b) => (a.y - b.y) || (a.m - b.m));
@@ -453,101 +457,126 @@ router.get('/fee-register', asyncHandler(async (req, res) => {
 
   streamPdf(res, `fee-register${classId ? `-${(groups[0]?.name || '').replace(/\s+/g, '')}` : ''}.pdf`, (doc) => {
     const { reg, bold } = bodyFonts(doc);
-    const startX = 30, W = doc.page.width;
+    const W = doc.page.width, H = doc.page.height;
     const cols: { key: string; label: string; w: number; align: 'left' | 'right' }[] = [
-      { key: 'student', label: 'STUDENT', w: 190, align: 'left' },
-      { key: 'rate', label: 'MONTHLY', w: 66, align: 'right' },
-      { key: 'annual', label: 'ANNUAL', w: 60, align: 'right' },
-      { key: 'computer', label: 'COMPUTER', w: 66, align: 'right' },
-      { key: 'transport', label: 'TRANSPORT', w: 70, align: 'right' },
+      { key: 'student', label: 'STUDENT', w: 168, align: 'left' },
+      { key: 'rate', label: 'MONTHLY', w: 60, align: 'right' },
+      { key: 'annual', label: 'ANNUAL', w: 58, align: 'right' },
+      { key: 'computer', label: 'COMPUTER', w: 70, align: 'right' },
+      { key: 'transport', label: 'TRANSPORT', w: 74, align: 'right' },
       { key: 'exam', label: 'EXAM', w: 54, align: 'right' },
       { key: 'misc', label: 'MISC', w: 54, align: 'right' },
-      { key: 'total', label: 'TOTAL', w: 74, align: 'right' },
-      { key: 'paid', label: 'PAID', w: 64, align: 'right' },
-      { key: 'due', label: 'DUES', w: 74, align: 'right' },
+      { key: 'total', label: 'TOTAL', w: 82, align: 'right' },
+      { key: 'paid', label: 'PAID', w: 68, align: 'right' },
+      { key: 'due', label: 'DUES', w: 82, align: 'right' },
     ];
+    const tableW = cols.reduce((a, c) => a + c.w, 0);      // 770
+    const startX = Math.round((W - tableW) / 2);           // centred → ~36pt inset, well clear of printer clip
     const xAt = (i: number) => startX + cols.slice(0, i).reduce((a, c) => a + c.w, 0);
-    const bottom = doc.page.height - 34;
-    const PAD = 4, ROW_H = 24;
+    const bounds = cols.map((_, i) => xAt(i)).concat([startX + tableW]); // 11 vertical boundaries
+    const contTop = 40, bottom = H - 44;
+    const PAD = 6, ROW_H = 30, HEAD_H = 24, BAND_H = 24, SUB_H = 28, GRAND_H = 30;
+    const GRID = '#94a3b8', OUTER = BRAND;
+
+    // ---- grid bookkeeping: verticals span [vertTop..y]; outer bold box spans [boxTop..y] ----
+    let y = 0, boxTop = 0, vertTop = 0, open = false;
+    const flush = () => {
+      if (!open) return;
+      doc.save();
+      doc.lineWidth(0.8).strokeColor(GRID);
+      for (let i = 1; i < bounds.length - 1; i++) doc.moveTo(bounds[i], vertTop).lineTo(bounds[i], y).stroke();
+      doc.lineWidth(2).strokeColor(OUTER).rect(startX, boxTop, tableW, y - boxTop).stroke(); // bold outer border
+      doc.restore();
+      open = false;
+    };
+    const hline = (yy: number, weight: number, color: string) => { doc.save().lineWidth(weight).strokeColor(color).moveTo(startX, yy).lineTo(startX + tableW, yy).stroke().restore(); };
+
+    // draw the class band + column header, opening a new grid box (used at group start & after page breaks)
+    const openBox = (title: string, sub: string) => {
+      boxTop = y;
+      doc.rect(startX, y, tableW, BAND_H).fill('#eeedf8');
+      doc.fillColor(BRAND).font(bold).fontSize(13).text(title, startX + PAD, y + 5, { lineBreak: false });
+      doc.font(reg).fontSize(9.5).fillColor('#6b7280').text(sub, startX, y + 7, { width: tableW - PAD, align: 'right', lineBreak: false });
+      y += BAND_H;
+      doc.rect(startX, y, tableW, HEAD_H).fill(BRAND);
+      doc.fillColor('white').font(bold).fontSize(9);
+      cols.forEach((c, i) => doc.text(c.label, xAt(i) + PAD - 1, y + 8, { width: c.w - 2 * PAD + 2, align: c.align, lineBreak: false }));
+      doc.save().lineWidth(0.5).strokeColor('#ffffff'); // white separators inside the header band
+      for (let i = 1; i < bounds.length - 1; i++) doc.moveTo(bounds[i], y).lineTo(bounds[i], y + HEAD_H).stroke();
+      doc.restore();
+      doc.fillColor('black'); y += HEAD_H;
+      vertTop = y; open = true; // verticals run from the top of the data rows
+      hline(y, 1.2, OUTER);
+    };
 
     // ----- letterhead + title (first page only) -----
-    let y = letterhead(doc, school);
-    doc.fillColor(BRAND).font(bold).fontSize(14).text('Fee Register', startX, y, { align: 'center', width: W - 2 * startX });
-    doc.fillColor('#555').font(reg).fontSize(9)
-      .text(`${classId ? `Class ${groups[0]?.name}` : 'All Classes'}  ·  Up to ${BS_MONTHS[period.month - 1]} ${period.year} (BS)  ·  All amounts in Rs.`, startX, y + 19, { align: 'center', width: W - 2 * startX });
-    y += 42;
+    y = letterhead(doc, school);
+    doc.fillColor(BRAND).font(bold).fontSize(18).text('Fee Register', startX, y, { align: 'center', width: tableW });
+    doc.fillColor('#555').font(reg).fontSize(11)
+      .text(`${classId ? `Class ${groups[0]?.name}` : 'All Classes'}   ·   Up to ${BS_MONTHS[period.month - 1]} ${period.year} (BS)   ·   All amounts in Rs.`, startX, y + 24, { align: 'center', width: tableW });
+    y += 50;
 
-    const drawHeader = () => {
-      doc.rect(startX, y, W - 2 * startX, 20).fill(BRAND);
-      doc.fillColor('white').font(bold).fontSize(8.5);
-      cols.forEach((c, i) => doc.text(c.label, xAt(i) + PAD, y + 6, { width: c.w - 2 * PAD, align: c.align, lineBreak: false }));
-      doc.fillColor('black'); y += 20;
-    };
-    const pageBreak = (need: number) => {
-      if (y + need <= bottom) return;
-      doc.addPage(); y = 34; drawHeader();
-    };
+    const newPage = (title: string, sub: string) => { flush(); doc.addPage(); y = contTop; openBox(title, sub); };
 
     let gt = { total: 0, paid: 0, due: 0 };
     for (const g of groups) {
-      pageBreak(24 + ROW_H);
-      // class band
-      doc.rect(startX, y, W - 2 * startX, 18).fill('#eeedf8');
-      doc.fillColor(BRAND).font(bold).fontSize(9.5).text(`Class ${g.name}`, startX + PAD, y + 5, { lineBreak: false });
-      doc.font(reg).fontSize(8).fillColor('#777').text(`${g.rows.length} student${g.rows.length === 1 ? '' : 's'}`, startX, y + 5, { width: W - 2 * startX - PAD, align: 'right', lineBreak: false });
-      doc.fillColor('black'); y += 18;
-      drawHeader();
+      if (y + BAND_H + HEAD_H + ROW_H + SUB_H > bottom) { flush(); doc.addPage(); y = contTop; }
+      const countLabel = `${g.rows.length} student${g.rows.length === 1 ? '' : 's'}`;
+      openBox(`Class ${g.name}`, countLabel);
 
       let sub = { total: 0, paid: 0, due: 0 };
       g.rows.forEach((r, idx) => {
-        pageBreak(ROW_H);
-        if (idx % 2 === 1) { doc.rect(startX, y, W - 2 * startX, ROW_H).fill('#f8fafc'); doc.fillColor('black'); }
+        if (y + ROW_H > bottom) newPage(`Class ${g.name} (cont.)`, countLabel);
+        if (idx % 2 === 1) { doc.rect(startX, y, tableW, ROW_H).fill('#f5f7fb'); doc.fillColor('black'); }
         // student cell: FREE tag + name, then class · IEMIS
         const sx = xAt(0) + PAD, sw = cols[0].w - 2 * PAD;
-        doc.fontSize(8.5).font(bold);
+        doc.fontSize(11).font(bold);
         let nx = sx;
-        if (r.feeFree) { doc.fillColor('#16a34a').text('FREE', sx, y + 4, { lineBreak: false }); nx = sx + doc.widthOfString('FREE') + 5; }
-        doc.fillColor('#111').text(r.name, nx, y + 4, { width: sx + sw - nx, lineBreak: false, ellipsis: true });
-        doc.font(reg).fontSize(6.5).fillColor('#94a3b8').text(`${r.cls} · IEMIS ${r.iemis || '—'}`, sx, y + 15, { width: sw, lineBreak: false, ellipsis: true });
+        if (r.feeFree) { doc.fillColor('#16a34a').text('FREE', sx, y + 6, { lineBreak: false }); nx = sx + doc.widthOfString('FREE') + 5; }
+        doc.fillColor('#111').text(r.name, nx, y + 6, { width: sx + sw - nx, lineBreak: false, ellipsis: true });
+        doc.font(reg).fontSize(8).fillColor('#94a3b8').text(`${r.cls} · IEMIS ${r.iemis || '—'}`, sx, y + 19, { width: sw, lineBreak: false, ellipsis: true });
 
         const cells: [number, string, string | null][] = [
           [1, dash(r.rate), null], [2, dash(r.annual), null], [3, dash(r.computer), null],
           [4, dash(r.transport), null], [5, dash(r.exam), null], [6, dash(r.misc), null],
           [7, num(r.total), '#111'], [8, num(r.paid), '#16a34a'], [9, num(r.due), r.due > 0 ? '#dc2626' : '#16a34a'],
         ];
-        doc.fontSize(8.5).font(reg);
         for (const [i, txt, color] of cells) {
-          doc.font(i >= 7 ? bold : reg).fillColor(color || '#334155')
-            .text(txt, xAt(i) + PAD, y + 8, { width: cols[i].w - 2 * PAD, align: 'right', lineBreak: false });
+          doc.font(i >= 7 ? bold : reg).fontSize(11).fillColor(color || '#334155')
+            .text(txt, xAt(i) + PAD, y + 9, { width: cols[i].w - 2 * PAD, align: 'right', lineBreak: false });
         }
         doc.fillColor('black');
         sub.total += r.total; sub.paid += r.paid; sub.due += r.due;
         y += ROW_H;
-        doc.moveTo(startX, y).lineTo(W - startX, y).lineWidth(0.4).strokeColor('#e2e8f0').stroke();
+        hline(y, 0.6, '#dbe0ea');
       });
 
       // class subtotal
-      pageBreak(ROW_H);
-      doc.rect(startX, y, W - 2 * startX, 20).fill('#f1f5f9');
-      doc.fillColor('#334155').font(bold).fontSize(8.5).text(`Class ${g.name} — subtotal (${g.rows.length})`, xAt(0) + PAD, y + 6, { lineBreak: false });
+      if (y + SUB_H > bottom) newPage(`Class ${g.name} (cont.)`, countLabel);
+      hline(y, 1.2, OUTER);
+      doc.rect(startX, y, tableW, SUB_H).fill('#eef1f7');
+      doc.fillColor('#1e293b').font(bold).fontSize(11.5).text(`Class ${g.name} — subtotal (${g.rows.length})`, xAt(0) + PAD, y + 8, { lineBreak: false });
       [[7, sub.total, '#111'], [8, sub.paid, '#16a34a'], [9, sub.due, sub.due > 0 ? '#dc2626' : '#16a34a']].forEach(([i, v, col]) =>
-        doc.fillColor(col as string).text(num(v as number), xAt(i as number) + PAD, y + 6, { width: cols[i as number].w - 2 * PAD, align: 'right', lineBreak: false }));
-      doc.fillColor('black'); y += 26;
+        doc.fillColor(col as string).text(num(v as number), xAt(i as number) + PAD, y + 8, { width: cols[i as number].w - 2 * PAD, align: 'right', lineBreak: false }));
+      doc.fillColor('black'); y += SUB_H;
+      flush(); // close this class's grid box
+      y += 12; // gap before next class
       gt.total += sub.total; gt.paid += sub.paid; gt.due += sub.due;
     }
 
     // grand total across classes (only meaningful for the all-classes export)
     if (groups.length > 1) {
-      pageBreak(24);
-      doc.rect(startX, y, W - 2 * startX, 22).fill(BRAND);
-      doc.fillColor('white').font(bold).fontSize(9).text('GRAND TOTAL', xAt(0) + PAD, y + 7, { lineBreak: false });
+      if (y + GRAND_H > bottom) { doc.addPage(); y = contTop; }
+      doc.rect(startX, y, tableW, GRAND_H).fill(BRAND);
+      doc.save().lineWidth(2).strokeColor(OUTER).rect(startX, y, tableW, GRAND_H).stroke().restore();
+      doc.fillColor('white').font(bold).fontSize(12.5).text('GRAND TOTAL', xAt(0) + PAD, y + 9, { lineBreak: false });
       [[7, gt.total], [8, gt.paid], [9, gt.due]].forEach(([i, v]) =>
-        doc.fillColor('white').text(num(v as number), xAt(i as number) + PAD, y + 7, { width: cols[i as number].w - 2 * PAD, align: 'right', lineBreak: false }));
-      doc.fillColor('black'); y += 30;
+        doc.fillColor('white').text(num(v as number), xAt(i as number) + PAD, y + 9, { width: cols[i as number].w - 2 * PAD, align: 'right', lineBreak: false }));
+      doc.fillColor('black'); y += GRAND_H + 6;
     }
 
-    doc.font(reg).fontSize(7.5).fillColor('#94a3b8')
-      .text(`Generated ${bsDate(new Date())} (BS)  ·  ${school.name}`, startX, doc.page.height - 26, { width: W - 2 * startX, align: 'center', lineBreak: false });
+    doc.font(reg).fontSize(8.5).fillColor('#94a3b8')
+      .text(`Generated ${bsDate(new Date())} (BS)  ·  ${school.name}`, startX, H - 30, { width: tableW, align: 'center', lineBreak: false });
   }, { size: 'A4', margin: 30, layout: 'landscape' });
 }));
 

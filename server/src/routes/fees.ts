@@ -55,7 +55,7 @@ router.get('/', requireRole('ADMIN'), asyncHandler(async (req, res) => {
     const t = invoiceTotals(inv);
     // per-month tuition rate (latest real month) vs the accumulated total across months
     const monthItems = inv.items
-      .filter((i) => i.bsMonth && i.description !== 'Previous Dues')
+      .filter((i) => i.bsMonth && i.description.endsWith('Tuition Fee'))
       .sort((a, b) => (a.bsYear! - b.bsYear!) || (a.bsMonth! - b.bsMonth!));
     const components = componentsOf(inv.items);
     return {
@@ -105,7 +105,11 @@ function componentsOf(items: { description: string; amount: number; bsMonth?: nu
   for (const f of FEE_ORDER) out[f.key] = 0;
   for (const it of items) {
     if (it.description === 'Previous Dues') continue; // carried forward, not monthly tuition
-    if (it.bsMonth) { out.monthlyTuition += it.amount; continue; }
+    if (it.bsMonth) { // dated monthly lines: Computer Fee has its own column, everything else is tuition
+      if (it.description.endsWith('Computer Fee')) out.computerFee += it.amount;
+      else out.monthlyTuition += it.amount;
+      continue;
+    }
     const k = LABEL_TO_KEY[it.description]; if (k) out[k] = (out[k] || 0) + it.amount;
   }
   return out;

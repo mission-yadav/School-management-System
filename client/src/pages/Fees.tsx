@@ -476,7 +476,7 @@ function PaidCorrectionDialog({ studentId, onClose, onChanged }: { studentId: nu
 const STRUCT_COLS: { key: string; label: string }[] = [
   { key: 'monthlyTuition', label: 'Monthly Tuition' },
   { key: 'annualCharge', label: 'Annual' },
-  { key: 'computerFee', label: 'Computer' },
+  { key: 'computerFee', label: 'Computer/mo' },
   { key: 'transportFee', label: 'Transport' },
   { key: 'examFee', label: 'Exam' },
   { key: 'miscCharge', label: 'Misc' },
@@ -500,7 +500,7 @@ function FeeStructureEditor() {
   if (loading) return <Loading />;
   return (
     <div>
-      <p className="mb-3 text-sm text-slate-500">Set the standard charges for each class. Saving updates every existing bill in that class (monthly tuition and charges), and pre-fills new bills. Transportation is billed only to students who use the service.</p>
+      <p className="mb-3 text-sm text-slate-500">Set the standard charges for each class. Monthly Tuition and Computer are billed every month; Annual recurs yearly; Exam and Misc are one-time. Saving updates every existing bill in that class and pre-fills new bills. Transportation is billed only to students who use the service.</p>
       <Table>
         <THead>
           <TR className="hover:bg-transparent">

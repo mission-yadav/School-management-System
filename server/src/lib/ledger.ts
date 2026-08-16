@@ -90,13 +90,18 @@ export async function revertBillingPeriod(): Promise<BSPeriod> {
   return prev;
 }
 
-// One-time headings added when the ledger begins. Annual Charge is NOT here — it
-// recurs once a year (see the annual-charge block in ensureLedger).
+// One-time headings added when the ledger begins. Annual Charge (yearly) and Computer Fee
+// (monthly) are NOT here — they recur; see ensureLedger.
 const HEADINGS: { key: string; label: string }[] = [
-  { key: 'computerFee', label: 'Computer Fee' },
   { key: 'examFee', label: 'Exam Fee' },
   { key: 'miscCharge', label: 'Miscellaneous Charges' },
 ];
+
+// A dated monthly line reads "Bhadra 2083 – Tuition Fee". Tuition and Computer Fee both recur
+// per month; classify dated (bsMonth) lines by their trailing label so they never mix.
+const monthDesc = (m: number, y: number, suffix: string) => `${BS_MONTHS[m - 1]} ${y} – ${suffix}`;
+export const isTuitionLine = (i: { description: string; bsMonth?: number | null }) => i.bsMonth != null && i.description.endsWith('Tuition Fee');
+export const isComputerLine = (i: { description: string; bsMonth?: number | null }) => i.bsMonth != null && i.description.endsWith('Computer Fee');
 
 /**
  * Ensure a student has a running fee ledger (one FeeInvoice, isLedger=true) and that it
@@ -123,10 +128,23 @@ export async function ensureLedger(studentId: number, period?: BSPeriod): Promis
   const monthly = student.feeFree ? 0 : (s?.monthlyTuition ?? 0);
   const toCreate: any[] = [];
 
-  const haveMonths = new Set(inv.items.filter((i) => i.bsMonth).map((i) => `${i.bsYear}-${i.bsMonth}`));
+  const tuitionMonths = new Set(inv.items.filter(isTuitionLine).map((i) => `${i.bsYear}-${i.bsMonth}`));
   for (let m = 1; m <= month; m++) {
-    if (!haveMonths.has(`${year}-${m}`))
-      toCreate.push({ invoiceId: inv.id, description: `${BS_MONTHS[m - 1]} ${year} – Tuition Fee`, amount: monthly, bsYear: year, bsMonth: m });
+    if (!tuitionMonths.has(`${year}-${m}`))
+      toCreate.push({ invoiceId: inv.id, description: monthDesc(m, year, 'Tuition Fee'), amount: monthly, bsYear: year, bsMonth: m });
+  }
+
+  // Computer Fee recurs monthly (same cadence as tuition). Older ledgers billed it once as a
+  // heading — drop that legacy one-time line so it isn't double-counted alongside the monthly ones.
+  if (inv.items.some((i) => i.bsMonth == null && i.description === 'Computer Fee'))
+    await prisma.feeItem.deleteMany({ where: { invoiceId: inv.id, bsMonth: null, description: 'Computer Fee' } });
+  const computer = s?.computerFee ?? 0;
+  if (computer > 0) {
+    const computerMonths = new Set(inv.items.filter(isComputerLine).map((i) => `${i.bsYear}-${i.bsMonth}`));
+    for (let m = 1; m <= month; m++) {
+      if (!computerMonths.has(`${year}-${m}`))
+        toCreate.push({ invoiceId: inv.id, description: monthDesc(m, year, 'Computer Fee'), amount: computer, bsYear: year, bsMonth: m });
+    }
   }
 
   const haveDesc = new Set(inv.items.filter((i) => !i.bsMonth).map((i) => i.description));
@@ -190,12 +208,17 @@ async function syncOneLedger(student: any, s: any, period: BSPeriod): Promise<vo
   const invId = await ensureLedger(student.id, period);
   if (!invId) return;
 
-  // month-wise tuition (leave any consolidated "Previous Dues" line alone)
+  // month-wise tuition (target only tuition lines — never "Previous Dues" or monthly Computer Fee)
   const monthly = student.feeFree ? 0 : (s?.monthlyTuition ?? 0);
   await prisma.feeItem.updateMany({
-    where: { invoiceId: invId, bsMonth: { not: null }, NOT: { description: 'Previous Dues' } },
+    where: { invoiceId: invId, bsMonth: { not: null }, description: { endsWith: 'Tuition Fee' } },
     data: { amount: monthly },
   });
+
+  // month-wise computer fee — re-price every month's line, or strip them all if set to 0
+  const computer = s?.computerFee ?? 0;
+  if (computer > 0) await prisma.feeItem.updateMany({ where: { invoiceId: invId, bsMonth: { not: null }, description: { endsWith: 'Computer Fee' } }, data: { amount: computer } });
+  else await prisma.feeItem.deleteMany({ where: { invoiceId: invId, bsMonth: { not: null }, description: { endsWith: 'Computer Fee' } } });
 
   // Annual charge recurs yearly — update every year's line to the new amount (or remove
   // all if set to 0 or the student is exempt). Never create here; ensureLedger adds them.
@@ -203,9 +226,8 @@ async function syncOneLedger(student: any, s: any, period: BSPeriod): Promise<vo
   if (annualAmt > 0 && !student.annualExempt) await prisma.feeItem.updateMany({ where: { invoiceId: invId, description: 'Annual Charge' }, data: { amount: annualAmt } });
   else await prisma.feeItem.deleteMany({ where: { invoiceId: invId, description: 'Annual Charge' } });
 
-  // canonical one-time headings -> desired amount (0 = remove)
+  // canonical one-time headings -> desired amount (0 = remove). Computer Fee is monthly now (above).
   const desired: [string, number][] = [
-    ['Computer Fee', s?.computerFee ?? 0],
     ['Exam Fee', s?.examFee ?? 0],
     ['Miscellaneous Charges', s?.miscCharge ?? 0],
     ['Transportation Charge', student.usesTransport ? (student.transportFee ?? s?.transportFee ?? 0) : 0],
