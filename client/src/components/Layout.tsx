@@ -66,10 +66,10 @@ export default function Layout() {
   }
 
   return (
-    <div className="flex min-h-screen">
+    <div className="flex h-screen overflow-hidden">
       <aside
         className={cn(
-          'fixed inset-y-0 left-0 z-40 flex w-64 flex-col bg-brand text-white transition-transform md:static md:translate-x-0',
+          'fixed inset-y-0 left-0 z-40 flex h-screen w-64 flex-col bg-brand text-white transition-transform md:static md:translate-x-0',
           open ? 'translate-x-0' : '-translate-x-full'
         )}
       >
@@ -108,7 +108,7 @@ export default function Layout() {
             <Button variant="outline" size="sm" onClick={doLogout}><LogOut className="size-4" /> Logout</Button>
           </div>
         </header>
-        <main className="flex-1 p-4 md:p-8">
+        <main className="flex-1 overflow-y-auto p-4 md:p-8">
           <Outlet />
         </main>
       </div>

@@ -4,7 +4,8 @@ import { cn } from '@/lib/utils';
 export function Table({ className, ...props }: React.HTMLAttributes<HTMLTableElement>) {
   return (
     <div className="w-full overflow-x-auto rounded-xl border border-slate-200 bg-white">
-      <table className={cn('w-full text-left text-sm', className)} {...props} />
+      {/* w-max so wide tables overflow (and show a horizontal scrollbar) instead of squishing */}
+      <table className={cn('min-w-full w-max text-left text-sm', className)} {...props} />
     </div>
   );
 }

@@ -90,7 +90,7 @@ router.get('/certificate/:id', asyncHandler(async (req, res) => {
     ];
     let dy = doc.y + 20;
     for (const [k, v] of details) {
-      doc.font('Helvetica-Bold').text(`${k}: `, 60, dy, { continued: true }).font('Helvetica').text(v);
+      doc.font('Helvetica').text(`${k}: `, 60, dy, { continued: true }).font('Helvetica').text(v);
       dy += 20;
     }
     signatureBlock(doc);
@@ -104,7 +104,7 @@ function renderIdCard(res: any, school: SchoolInfo, s: any, cls: string, serial:
     doc.roundedRect(x, y, w, h, 10).lineWidth(2).stroke(BRAND);
     doc.rect(x, y, w, 46).fill(BRAND);
     try { doc.image(LOGO_PATH, x + 8, y + 6, { fit: [34, 34] }); } catch { /* logo optional */ }
-    doc.fillColor('white').fontSize(13).font('Helvetica-Bold').text(school.name, x + 48, y + 15, { width: w - 56 });
+    doc.fillColor('white').fontSize(13).font('Helvetica').text(school.name, x + 48, y + 15, { width: w - 56 });
     doc.fillColor('black').font('Helvetica').fontSize(11);
     const rows: [string, string][] = [
       ['Name', s.name], ['IEMIS ID', s.iemis || '—'], ['Class', cls],
@@ -113,7 +113,7 @@ function renderIdCard(res: any, school: SchoolInfo, s: any, cls: string, serial:
     ];
     let ry = y + 60;
     for (const [k, v] of rows) {
-      doc.font('Helvetica-Bold').text(`${k}: `, x + 16, ry, { continued: true }).font('Helvetica').text(v);
+      doc.font('Helvetica').text(`${k}: `, x + 16, ry, { continued: true }).font('Helvetica').text(v);
       ry += 22;
     }
     doc.fontSize(8).fillColor('#888').text(`ID: ${serial}`, x + 16, y + h - 20);
@@ -149,12 +149,12 @@ router.get('/receipt/invoice/:invoiceId', asyncHandler(async (req, res) => {
       ['Student', inv.student.name], ['IEMIS ID', inv.student.iemis || '—'],
       ['Class', inv.student.class?.name || '—'], ['Fee For', upToLabel(period)],
     ];
-    for (const [k, v] of info) { doc.font('Helvetica-Bold').text(`${k}: `, 50, dy, { continued: true }).font('Helvetica').text(v); dy += 20; }
+    for (const [k, v] of info) { doc.font('Helvetica').text(`${k}: `, 50, dy, { continued: true }).font('Helvetica').text(v); dy += 20; }
 
     // payments table
     dy += 8;
     doc.rect(50, dy, doc.page.width - 100, 24).fill('#f0f0f7');
-    doc.fillColor(BRAND).font('Helvetica-Bold').fontSize(11)
+    doc.fillColor(BRAND).font('Helvetica').fontSize(11)
       .text('Receipt No', 60, dy + 6).text('Date', 200, dy + 6).text('Mode', 340, dy + 6).text('Amount (Rs.)', 50, dy + 6, { align: 'right' });
     doc.fillColor('black').font('Helvetica'); dy += 30;
     for (const p of inv.payments) {
@@ -163,7 +163,7 @@ router.get('/receipt/invoice/:invoiceId', asyncHandler(async (req, res) => {
       dy += 20;
     }
     doc.moveTo(50, dy).lineTo(doc.page.width - 50, dy).stroke('#ccc'); dy += 10;
-    doc.font('Helvetica-Bold');
+    doc.font('Helvetica');
     doc.text('Invoice Total', 60, dy).text(total.toLocaleString('en-IN'), 50, dy, { align: 'right' }); dy += 20;
     doc.fillColor('green').text('Total Paid', 60, dy).text(paid.toLocaleString('en-IN'), 50, dy, { align: 'right' }); dy += 20;
     if (settled - paid > 0) { doc.fillColor('#b91c1c').text('Concession (Less)', 60, dy).text((settled - paid).toLocaleString('en-IN'), 50, dy, { align: 'right' }); dy += 20; }
@@ -215,7 +215,7 @@ router.get('/receipt/:paymentId', asyncHandler(async (req, res) => {
     doc.lineWidth(1).fillColor('black');
 
     let y = bandH + 8;
-    doc.fillColor(BRAND).font('Helvetica-Bold').fontSize(11).text('FEE RECEIPT', L, y, { width: R - L, align: 'center' });
+    doc.fillColor(BRAND).font('Helvetica').fontSize(11).text('FEE RECEIPT', L, y, { width: R - L, align: 'center' });
     doc.fillColor('black');
     y += 17;
 
@@ -230,7 +230,7 @@ router.get('/receipt/:paymentId', asyncHandler(async (req, res) => {
       ['IEMIS ID', inv.student.iemis || '—'], ['Fee For', upToLabel(period)],
     ];
     doc.fontSize(8);
-    for (const [k, v] of info) { doc.font('Helvetica-Bold').text(`${k}: `, L, y, { continued: true }).font('Helvetica').text(v); y += 11; }
+    for (const [k, v] of info) { doc.font('Helvetica').text(`${k}: `, L, y, { continued: true }).font('Helvetica').text(v); y += 11; }
     y += 4;
 
     // bordered grid: Description | Amount
@@ -238,7 +238,7 @@ router.get('/receipt/:paymentId', asyncHandler(async (req, res) => {
     const gridRow = (label: string, amount: string, o: { header?: boolean; bold?: boolean; color?: string } = {}) => {
       if (o.header) { doc.rect(L, y, colX - L, rowH).fillAndStroke('#eef0f7', border); doc.rect(colX, y, R - colX, rowH).fillAndStroke('#eef0f7', border); }
       else { doc.rect(L, y, colX - L, rowH).stroke(border); doc.rect(colX, y, R - colX, rowH).stroke(border); }
-      doc.font(o.bold || o.header ? 'Helvetica-Bold' : 'Helvetica').fontSize(8).fillColor(o.color || (o.header ? BRAND : 'black'));
+      doc.font(o.bold || o.header ? 'Helvetica' : 'Helvetica').fontSize(8).fillColor(o.color || (o.header ? BRAND : 'black'));
       doc.text(label, L + 4, y + 3, { width: colX - L - 8, lineBreak: false });
       doc.text(amount, colX + 2, y + 3, { width: R - colX - 6, align: 'right', lineBreak: false });
       doc.fillColor('black');
@@ -302,7 +302,7 @@ function drawBillPanel(doc: PDFKit.PDFDocument, ox: number, oy: number, school: 
   doc.lineWidth(1).fillColor('black');
 
   let y = oy + 58;
-  doc.fillColor(BRAND).font('Helvetica-Bold').fontSize(10).text('FEE BILL', L, y, { width: R - L, align: 'center' });
+  doc.fillColor(BRAND).font('Helvetica').fontSize(10).text('FEE BILL', L, y, { width: R - L, align: 'center' });
   doc.fillColor('black'); y += 15;
   doc.font('Helvetica').fontSize(7).fillColor('#555')
     .text(`Bill No: SMS-${String(inv.id).padStart(5, '0')}`, L, y)
@@ -314,7 +314,7 @@ function drawBillPanel(doc: PDFKit.PDFDocument, ox: number, oy: number, school: 
     ['IEMIS ID', inv.student.iemis || '—'], ['Fee For', upToLabel(period)],
   ];
   doc.fontSize(7.5);
-  for (const [k, v] of info) { doc.font('Helvetica-Bold').text(`${k}: `, L, y, { continued: true }).font('Helvetica').text(v); y += 10.5; }
+  for (const [k, v] of info) { doc.font('Helvetica').text(`${k}: `, L, y, { continued: true }).font('Helvetica').text(v); y += 10.5; }
   y += 3;
 
   const gross = inv.items.reduce((a: number, i: any) => a + i.amount, 0);
@@ -325,7 +325,7 @@ function drawBillPanel(doc: PDFKit.PDFDocument, ox: number, oy: number, school: 
     const bg = o.header ? '#eef0f7' : o.fill || null;
     if (bg) { doc.rect(L, y, colX - L, rowH).fillAndStroke(bg, border); doc.rect(colX, y, R - colX, rowH).fillAndStroke(bg, border); }
     else { doc.rect(L, y, colX - L, rowH).stroke(border); doc.rect(colX, y, R - colX, rowH).stroke(border); }
-    doc.font(o.bold || o.header ? 'Helvetica-Bold' : 'Helvetica').fontSize(7.5).fillColor(o.color || (o.header ? BRAND : 'black'));
+    doc.font(o.bold || o.header ? 'Helvetica' : 'Helvetica').fontSize(7.5).fillColor(o.color || (o.header ? BRAND : 'black'));
     doc.text(label, L + 4, y + 3, { width: colX - L - 8, lineBreak: false });
     doc.text(amount, colX + 2, y + 3, { width: R - colX - 6, align: 'right', lineBreak: false });
     doc.fillColor('black');
@@ -389,52 +389,52 @@ router.get('/audit', asyncHandler(async (_req, res) => {
   streamPdf(res, `audit-report.pdf`, (doc) => {
     const W = doc.page.width;
     let y = letterhead(doc, school);
-    doc.fillColor(BRAND).fontSize(14).font('Helvetica-Bold').text('Audit Report (NFRS)', 50, y, { align: 'center' });
+    doc.fillColor(BRAND).fontSize(14).font('Helvetica').text('Audit Report (NFRS)', 50, y, { align: 'center' });
     doc.fillColor('#555').font('Helvetica').fontSize(9)
       .text(`As on ${bsDate(a.generatedAt)} (BS)  ·  All figures in ${a.currency}`, 50, y + 20, { align: 'center' });
     let dy = y + 46;
 
     const rowLine = (label: string, value: number, opts: { bold?: boolean; color?: string; indent?: number } = {}) => {
-      doc.font(opts.bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(10).fillColor(opts.color || 'black');
+      doc.font(opts.bold ? 'Helvetica' : 'Helvetica').fontSize(10).fillColor(opts.color || 'black');
       doc.text(label, 60 + (opts.indent || 0), dy, { width: W - 220 });
       doc.text(amt(value), W - 200, dy, { width: 140, align: 'right' });
       dy += 18;
     };
     const sectionBar = (title: string) => {
       doc.rect(50, dy, W - 100, 22).fill('#eeedf8');
-      doc.fillColor(BRAND).font('Helvetica-Bold').fontSize(11).text(title, 60, dy + 5);
+      doc.fillColor(BRAND).font('Helvetica').fontSize(11).text(title, 60, dy + 5);
       doc.fillColor('black'); dy += 30;
     };
     const rule = () => { doc.moveTo(50, dy).lineTo(W - 50, dy).stroke('#ccc'); dy += 6; };
 
     // ---- Income & Expenditure ----
     sectionBar('Income & Expenditure Statement');
-    doc.font('Helvetica-Bold').fontSize(10).fillColor('#555').text('INCOME', 60, dy); dy += 16;
+    doc.font('Helvetica').fontSize(10).fillColor('#555').text('INCOME', 60, dy); dy += 16;
     for (const l of a.incomeExpenditure.income) rowLine(l.heading, l.amount, { indent: 10 });
     if (a.incomeExpenditure.discounts > 0) rowLine('Less: Discounts / Concessions', -a.incomeExpenditure.discounts, { indent: 10, color: '#b91c1c' });
     rule();
     rowLine('Total Income', a.incomeExpenditure.totalIncome, { bold: true });
     dy += 8;
-    doc.font('Helvetica-Bold').fontSize(10).fillColor('#555').text('EXPENDITURE', 60, dy); dy += 16;
+    doc.font('Helvetica').fontSize(10).fillColor('#555').text('EXPENDITURE', 60, dy); dy += 16;
     for (const l of a.incomeExpenditure.expenditure) rowLine(l.heading, l.amount, { indent: 10 });
     rule();
     rowLine('Total Expenditure', a.incomeExpenditure.totalExpenditure, { bold: true });
     dy += 6;
     const surplus = a.incomeExpenditure.surplus;
     doc.rect(50, dy, W - 100, 24).fill(surplus >= 0 ? '#e8f5e9' : '#fdecea');
-    doc.font('Helvetica-Bold').fontSize(11).fillColor(surplus >= 0 ? '#1b5e20' : '#b71c1c')
+    doc.font('Helvetica').fontSize(11).fillColor(surplus >= 0 ? '#1b5e20' : '#b71c1c')
       .text(surplus >= 0 ? 'Surplus for the period' : 'Deficit for the period', 60, dy + 6)
       .text(amt(surplus), W - 200, dy + 6, { width: 140, align: 'right' });
     doc.fillColor('black'); dy += 40;
 
     // ---- Balance Sheet ----
     sectionBar('Balance Sheet (Statement of Financial Position)');
-    doc.font('Helvetica-Bold').fontSize(10).fillColor('#555').text('ASSETS', 60, dy); dy += 16;
+    doc.font('Helvetica').fontSize(10).fillColor('#555').text('ASSETS', 60, dy); dy += 16;
     for (const l of a.balanceSheet.assets) rowLine(l.heading, l.amount, { indent: 10 });
     rule();
     rowLine('Total Assets', a.balanceSheet.totalAssets, { bold: true });
     dy += 8;
-    doc.font('Helvetica-Bold').fontSize(10).fillColor('#555').text('FUND & LIABILITIES', 60, dy); dy += 16;
+    doc.font('Helvetica').fontSize(10).fillColor('#555').text('FUND & LIABILITIES', 60, dy); dy += 16;
     for (const l of a.balanceSheet.fund) rowLine(l.heading, l.amount, { indent: 10 });
     for (const l of a.balanceSheet.liabilities) rowLine(l.heading, l.amount, { indent: 10 });
     rule();
@@ -469,11 +469,11 @@ router.get('/report-card', asyncHandler(async (req, res) => {
     let dy = y + 10;
     doc.fontSize(11);
     [['Name', student.name], ['IEMIS ID', student.iemis || '—'], ['Class', student.class?.name || '—']].forEach(([k, v]) => {
-      doc.font('Helvetica-Bold').text(`${k}: `, 50, dy, { continued: true }).font('Helvetica').text(v as string); dy += 18;
+      doc.font('Helvetica').text(`${k}: `, 50, dy, { continued: true }).font('Helvetica').text(v as string); dy += 18;
     });
     dy += 10;
     doc.rect(50, dy, doc.page.width - 100, 24).fill('#f0f0f7');
-    doc.fillColor(BRAND).font('Helvetica-Bold')
+    doc.fillColor(BRAND).font('Helvetica')
       .text('Subject', 60, dy + 6).text('Marks', 300, dy + 6).text('Max', 380, dy + 6).text('%', 460, dy + 6);
     doc.fillColor('black').font('Helvetica'); dy += 30;
     for (const r of results) {
@@ -482,7 +482,7 @@ router.get('/report-card', asyncHandler(async (req, res) => {
       dy += 20;
     }
     dy += 10;
-    doc.font('Helvetica-Bold').text(`Total: ${total} / ${max}   (${Math.round(percent * 100) / 100}%)`, 60, dy);
+    doc.font('Helvetica').text(`Total: ${total} / ${max}   (${Math.round(percent * 100) / 100}%)`, 60, dy);
     doc.text(`Result: ${percent >= 35 ? 'PASS' : 'FAIL'}`, 60, dy + 20);
     signatureBlock(doc);
   });

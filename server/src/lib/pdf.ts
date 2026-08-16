@@ -9,10 +9,10 @@ export const LOGO_PATH = path.join(__dirname, '..', '..', 'assets', 'logo.png');
 const NAME_FONT_PATH = path.join(__dirname, '..', '..', 'assets', 'fonts', 'vipnagorgialla-bold.otf');
 
 /** Register the Vipnagorgialla display font (used only for the school name). Falls back to
- *  Helvetica-Bold if the file is missing. Returns the font name to pass to doc.font(). */
+ *  Helvetica if the file is missing. Returns the font name to pass to doc.font(). */
 export function schoolNameFont(doc: PDFKit.PDFDocument): string {
   try { doc.registerFont('SchoolName', NAME_FONT_PATH); return 'SchoolName'; }
-  catch { return 'Helvetica-Bold'; }
+  catch { return 'Helvetica'; }
 }
 
 export interface SchoolInfo {
@@ -53,7 +53,7 @@ export function letterhead(doc: PDFKit.PDFDocument, school: SchoolInfo): number 
   const pan = school.pan || '305741055';
   const contact = school.phone || '9845186111';
   const rLines = [`PAN No.:- ${pan}`, `Contact:- ${contact}`];
-  doc.font('Helvetica-Bold').fontSize(10);
+  doc.font('Helvetica').fontSize(10);
   const rLineH = doc.currentLineHeight();
   const rWidth = Math.max(...rLines.map((l) => doc.widthOfString(l))) + 2;
   const rLeft = W - 40 - rWidth;
@@ -85,7 +85,7 @@ export function letterhead(doc: PDFKit.PDFDocument, school: SchoolInfo): number 
 
   // Contact block, vertically centred in the band.
   let ry = (bandH - (rLineH * rLines.length + 3)) / 2;
-  doc.font('Helvetica-Bold').fontSize(10).fillColor('#444');
+  doc.font('Helvetica').fontSize(10).fillColor('#444');
   for (const ln of rLines) {
     doc.text(ln, rLeft, ry, { lineBreak: false });
     ry += rLineH + 3;
@@ -98,7 +98,7 @@ export function letterhead(doc: PDFKit.PDFDocument, school: SchoolInfo): number 
 }
 
 export function heading(doc: PDFKit.PDFDocument, title: string, y: number) {
-  doc.fillColor(BRAND).fontSize(16).font('Helvetica-Bold').text(title.toUpperCase(), 50, y, { align: 'center', underline: true });
+  doc.fillColor(BRAND).fontSize(16).font('Helvetica').text(title.toUpperCase(), 50, y, { align: 'center', underline: true });
   doc.fillColor('black').font('Helvetica').fontSize(12);
   return y + 40;
 }
