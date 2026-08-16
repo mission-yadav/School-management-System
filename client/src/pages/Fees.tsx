@@ -167,7 +167,7 @@ function InvoicesTab() {
   });
 
   // ---- pagination (10 rows per page) ----
-  const PAGE_SIZE = 10;
+  const PAGE_SIZE = 20;
   const [page, setPage] = useState(1);
   const pageCount = Math.max(1, Math.ceil(filteredInvoices.length / PAGE_SIZE));
   const curPage = Math.min(page, pageCount);
