@@ -6,6 +6,8 @@ const { fork } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
+let autoUpdater = null;
+try { autoUpdater = require('electron-updater').autoUpdater; } catch { /* optional */ }
 
 const PORT = 47615; // fixed, uncommon localhost port
 const isPackaged = app.isPackaged;
@@ -106,11 +108,33 @@ function createWindow() {
   });
 }
 
+// Check GitHub Releases for a newer version, download in the background, and offer
+// to restart when ready. No-ops if offline or unpackaged.
+function setupAutoUpdate() {
+  if (!autoUpdater || !app.isPackaged) return;
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.on('update-downloaded', async (info) => {
+    const { response } = await dialog.showMessageBox({
+      type: 'info',
+      buttons: ['Restart & update now', 'Later'],
+      defaultId: 0,
+      title: 'Update available',
+      message: `Janaki School ${info.version} has been downloaded.`,
+      detail: 'Restart now to apply the update, or it will be installed the next time you close the app.',
+    });
+    if (response === 0) { setImmediate(() => autoUpdater.quitAndInstall()); }
+  });
+  autoUpdater.on('error', (e) => { try { fs.appendFileSync(logPath, `[updater] ${e}\n`); } catch { /* ignore */ } });
+  autoUpdater.checkForUpdates().catch(() => { /* offline — ignore */ });
+}
+
 app.whenReady().then(async () => {
   try {
     startServer();
     await waitForServer();
     createWindow();
+    setTimeout(setupAutoUpdate, 4000); // check shortly after the window is up
   } catch (err) {
     dialog.showErrorBox('Startup failed', `${String(err && err.message || err)}\n\nFull log: ${logPath}`);
     app.quit();

@@ -1,7 +1,7 @@
 {
   "name": "janaki-school-desktop",
-  "version": "1.0.0",
-  "description": "Janaki Secondary School — fee & school management (desktop)",
+  "version": "1.0.1",
+  "description": "Janaki Secondary School \u2014 fee & school management (desktop)",
   "author": "Janaki Secondary School",
   "main": "main.cjs",
   "private": true,
@@ -82,17 +82,28 @@
       "artifactName": "Janaki-School-Setup-${version}.${ext}"
     },
     "nsis": {
-      "oneClick": false,
+      "oneClick": true,
       "perMachine": false,
-      "allowToChangeInstallationDirectory": true,
+      "allowToChangeInstallationDirectory": false,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "Janaki School"
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "mission-yadav",
+        "repo": "School-management-System",
+        "releaseType": "release"
+      }
+    ]
   },
   "allowScripts": {
     "electron@22.3.27": true,
     "electron-builder@24.13.3": true,
     "app-builder-bin@4.0.0": true
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
   }
 }
