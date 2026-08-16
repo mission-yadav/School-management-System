@@ -17,7 +17,7 @@ const resRoot = isPackaged ? process.resourcesPath : path.join(__dirname, '..');
 const serverDir = path.join(resRoot, 'server');
 const serverEntry = path.join(serverDir, 'dist', 'index.js');
 const clientDist = path.join(resRoot, 'client', 'dist');
-const seedDb = path.join(serverDir, 'prisma', 'dev.db');
+const seedDb = path.join(serverDir, 'prisma', 'seed.db'); // PII-free starter DB (real data lives in userData)
 
 // The live database lives in the OS user-data dir so it is writable and survives updates.
 const dbPath = path.join(app.getPath('userData'), 'janaki-school.db');
