@@ -6,7 +6,7 @@ export function Table({ className, containerClassName, ...props }: React.HTMLAtt
     // Scroll box: rows scroll inside it (sticky header) so the horizontal scrollbar stays
     // reachable instead of sitting at the bottom of every row. Default caps at 65vh; pass
     // containerClassName="max-h-none h-full" to fill a flex parent instead.
-    <div className={cn('w-full max-h-[65vh] overflow-auto rounded-xl border border-slate-200 bg-white', containerClassName)}>
+    <div className={cn('table-scroll w-full max-h-[65vh] rounded-xl border border-slate-200 bg-white', containerClassName)}>
       {/* w-max so wide tables overflow (and show a horizontal scrollbar) instead of squishing */}
       <table className={cn('min-w-full w-max text-left text-sm', className)} {...props} />
     </div>
