@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Pencil } from 'lucide-react';
 import api, { apiError } from '@/lib/api';
@@ -25,6 +25,33 @@ export default function Students() {
   const url = `/students${qs ? `?${qs}` : ''}`;
   const { data, loading, refetch } = useFetch<any[]>(url, [classId, q, searchBy]);
   const { data: classes } = useFetch<any[]>('/classes');
+
+  // ---- bulk import (class roster JSON files) ----
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [importing, setImporting] = useState(false);
+  async function onImportFiles(e: React.ChangeEvent<HTMLInputElement>) {
+    const list = e.target.files;
+    if (!list || !list.length) return;
+    setImporting(true);
+    try {
+      const files: any[] = [];
+      for (const f of Array.from(list)) {
+        try { files.push(JSON.parse(await f.text())); } catch { /* skip invalid json */ }
+      }
+      if (!files.length) { toast('No valid JSON files selected', 'error'); return; }
+      const { data } = await api.post('/students/import', { files });
+      const parts = [`Imported ${data.created} student${data.created === 1 ? '' : 's'}`];
+      if (data.skipped) parts.push(`${data.skipped} skipped (already present)`);
+      if (data.unmatched?.length) parts.push(`unmatched: ${data.unmatched.join(', ')}`);
+      toast(parts.join(' · '));
+      refetch();
+    } catch (err) {
+      toast(apiError(err), 'error');
+    } finally {
+      setImporting(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  }
 
   const [dialog, setDialog] = useState<{ open: boolean; id: number | null }>({ open: false, id: null });
 
@@ -63,7 +90,15 @@ export default function Students() {
   ];
 
   return (<div>
-    <PageHeader title="Students" subtitle="Manage student records" actions={<Button onClick={() => setDialog({ open: true, id: null })}>+ Admit Student</Button>} />
+    <PageHeader title="Students" subtitle="Manage student records" actions={
+      <>
+        <input ref={fileRef} type="file" accept=".json,application/json" multiple className="hidden" onChange={onImportFiles} />
+        <Button variant="outline" disabled={importing} onClick={() => fileRef.current?.click()} title="Import class roster JSON files">
+          {importing ? 'Importing…' : 'Import Students'}
+        </Button>
+        <Button onClick={() => setDialog({ open: true, id: null })}>+ Admit Student</Button>
+      </>
+    } />
     <div className="flex gap-3 mb-4">
       <Select value={classId} onChange={(e) => setClassId(e.target.value)} className="w-48">
         <option value="">All Classes</option>

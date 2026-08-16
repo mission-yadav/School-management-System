@@ -2,9 +2,100 @@ import { Router } from 'express';
 import prisma from '../prisma.js';
 import { authRequired, requireRole } from '../middleware/auth.js';
 import { asyncHandler, AppError, intParam } from '../lib/http.js';
+import { bsToAd } from '../lib/nepaliDate.js';
+import { ensureLedger } from '../lib/ledger.js';
 
 const router = Router();
 router.use(authRequired);
+
+// normalize a class label for matching ("L.K.G." / "LKG" / " lkg " all match)
+const normClass = (s: string) => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+// canonical display name + promotion order for a roster's class label
+function canonicalClass(label: string): { name: string; order: number } {
+  const n = normClass(label);
+  const fixed: Record<string, { name: string; order: number }> = {
+    PG: { name: 'P.G.', order: 1 }, PLAYGROUP: { name: 'P.G.', order: 1 },
+    NURSERY: { name: 'NURSERY', order: 2 }, LKG: { name: 'L.K.G.', order: 3 }, UKG: { name: 'U.K.G.', order: 4 },
+  };
+  if (fixed[n]) return fixed[n];
+  const num = parseInt(n, 10);
+  if (!isNaN(num)) return { name: String(num), order: num + 4 }; // 1->5 … 10->14
+  return { name: String(label).trim(), order: 0 };
+}
+
+/**
+ * POST /api/students/import (ADMIN) — bulk-import students from class roster files.
+ * body: { files: [{ class: "1"|"LKG"|..., students: [{ full_name, student_id, sn,
+ *         father_name, mother_name, permanent_address, contact_no|mob_no, dob(BS)? }] }] }
+ * Maps each file's class by name, converts BS DOBs, creates a parent (father), skips
+ * students whose IEMIS already exists. Returns counts + any unmatched class labels.
+ */
+router.post('/import', requireRole('ADMIN'), asyncHandler(async (req, res) => {
+  const files = (req.body?.files || []) as { class: string; students: any[] }[];
+  if (!Array.isArray(files) || !files.length) throw new AppError(400, 'files[] required');
+
+  const classes = await prisma.class.findMany({ include: { sections: true } });
+  const byNorm = new Map(classes.map((c) => [normClass(c.name), c]));
+
+  let created = 0, skipped = 0;
+  const unmatched: string[] = [];
+  const perClass: Record<string, number> = {};
+
+  for (const file of files) {
+    let cls = byNorm.get(normClass(file.class));
+    if (!cls) {
+      // auto-create the class (with canonical name + promotion order) so import is self-sufficient
+      const { name, order } = canonicalClass(file.class);
+      if (!name) { unmatched.push(String(file.class)); continue; }
+      cls = await prisma.class.create({ data: { name, order, sections: { create: [{ name: 'A' }] } }, include: { sections: true } });
+      byNorm.set(normClass(file.class), cls);
+    }
+    const sectionId = cls.sections[0]?.id ?? null;
+
+    for (const s of (file.students || [])) {
+      const iemis = String(s.student_id || '').trim() || null;
+      const name = String(s.full_name || '').replace(/\s+/g, ' ').trim();
+      if (!name) { skipped++; continue; }
+      if (iemis && (await prisma.student.findFirst({ where: { iemis } }))) { skipped++; continue; }
+
+      const phone = s.contact_no || s.mob_no ? String(s.contact_no || s.mob_no) : null;
+      const dob = bsToAd(s.dob);
+      const count = await prisma.student.count();
+      try {
+        let parentId: number | null = null;
+        if (s.father_name) {
+          const p = await prisma.parent.create({ data: { name: String(s.father_name).trim(), relation: 'Father', phone } });
+          parentId = p.id;
+        }
+        await prisma.student.create({
+          data: {
+            admissionNo: `IMP-${iemis || `${normClass(file.class)}-${s.sn}-${count}`}`,
+            iemis: iemis || undefined,
+            rollNo: s.sn ? String(s.sn) : null,
+            name,
+            address: s.permanent_address || null,
+            phone,
+            dob: dob || undefined,
+            classId: cls.id,
+            sectionId,
+            status: 'ACTIVE',
+            parentId: parentId ?? undefined,
+          },
+        });
+        created++;
+        perClass[cls.name] = (perClass[cls.name] || 0) + 1;
+      } catch {
+        skipped++;
+      }
+    }
+  }
+
+  // give the new students a fee ledger so they show up in billing right away
+  const fresh = await prisma.student.findMany({ where: { admissionNo: { startsWith: 'IMP-' }, status: 'ACTIVE' }, select: { id: true } });
+  for (const st of fresh) await ensureLedger(st.id);
+
+  res.json({ created, skipped, unmatched: [...new Set(unmatched)], perClass });
+}));
 
 const PROFILE_FIELDS = [
   'admissionNo', 'iemis', 'rollNo', 'name', 'gender', 'dob', 'bloodGroup', 'address', 'phone',
