@@ -16,12 +16,25 @@
 
   --color-border: #e5e7eb;
   --color-ring: #262081;
+
+  /* include the ₹-fallback font first (scoped to U+20B9 below) so the rupee sign
+     renders on Windows 7, whose system fonts lack it */
+  --font-sans: "RupeeSign", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+/* A bundled font used ONLY for the Indian Rupee sign (₹); everything else keeps the system font. */
+@font-face {
+  font-family: "RupeeSign";
+  src: url("/fonts/DejaVuSans.ttf") format("truetype");
+  unicode-range: U+20B9;
+  font-weight: 100 900;
+  font-display: swap;
 }
 
 html, body, #root { height: 100%; }
 body {
   margin: 0;
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: "RupeeSign", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   background: #f6f7fb;
   color: #1f2430;
   -webkit-font-smoothing: antialiased;

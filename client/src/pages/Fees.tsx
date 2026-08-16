@@ -58,15 +58,15 @@ export default function Fees() {
   const navigate = useNavigate();
   const tab = pathname.endsWith('/structure') ? 'structure' : 'invoices';
   return (
-    <div className="flex h-full flex-col">
+    <div>
       <PageHeader title="Fee Management" subtitle="Billing, collections & fee structure" />
-      <Tabs value={tab} onValueChange={(v) => navigate(v === 'structure' ? '/fees/structure' : '/fees')} className="flex min-h-0 flex-1 flex-col">
+      <Tabs value={tab} onValueChange={(v) => navigate(v === 'structure' ? '/fees/structure' : '/fees')}>
         <TabsList>
           <TabsTrigger value="invoices">Billing &amp; Ledgers</TabsTrigger>
           <TabsTrigger value="structure">Fee Structure</TabsTrigger>
         </TabsList>
-        <TabsContent value="invoices" className="flex min-h-0 flex-1 flex-col"><InvoicesTab /></TabsContent>
-        <TabsContent value="structure" className="min-h-0 flex-1 overflow-y-auto"><FeeStructureEditor /></TabsContent>
+        <TabsContent value="invoices"><InvoicesTab /></TabsContent>
+        <TabsContent value="structure"><FeeStructureEditor /></TabsContent>
       </Tabs>
     </div>
   );
@@ -165,6 +165,14 @@ function InvoicesTab() {
       ? String(r.iemis || '').toLowerCase().includes(term)
       : String(r.studentName || '').toLowerCase().includes(term);
   });
+
+  // ---- pagination (10 rows per page) ----
+  const PAGE_SIZE = 10;
+  const [page, setPage] = useState(1);
+  const pageCount = Math.max(1, Math.ceil(filteredInvoices.length / PAGE_SIZE));
+  const curPage = Math.min(page, pageCount);
+  useEffect(() => { setPage(1); }, [listClass, listSearch, listBy]);
+  const pageRows = filteredInvoices.slice((curPage - 1) * PAGE_SIZE, curPage * PAGE_SIZE);
 
   // ---- new bill dialog ----
   const [openNew, setOpenNew] = useState(false);
@@ -297,10 +305,10 @@ function InvoicesTab() {
   ];
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="mb-4 shrink-0"><BillingMonthCard onAdvanced={reload} /></div>
+    <div>
+      <div className="mb-4"><BillingMonthCard onAdvanced={reload} /></div>
 
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3 shrink-0">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div className="grid flex-1 grid-cols-1 gap-3 sm:grid-cols-3">
           <Card><CardContent className="pt-5"><div className="text-sm text-slate-500">Total Billed</div><div className="text-2xl font-bold text-slate-800">{inr(summary?.billed || 0)}</div></CardContent></Card>
           <Card><CardContent className="pt-5"><div className="text-sm text-slate-500">Collected</div><div className="text-2xl font-bold text-green-600">{inr(summary?.collected || 0)}</div></CardContent></Card>
@@ -308,7 +316,7 @@ function InvoicesTab() {
         </div>
       </div>
 
-      <div className="mb-4 flex flex-wrap items-center gap-3 shrink-0">
+      <div className="mb-4 flex flex-wrap items-center gap-3">
         <Select value={listClass} onChange={(e) => setListClass(e.target.value)} className="w-40">
           <option value="">All Classes</option>
           {(classes || []).map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -327,9 +335,20 @@ function InvoicesTab() {
         </Button>
       </div>
 
-      <div className="min-h-0 flex-1">
-        {loading ? <Loading /> : <DataTable fill columns={columns} rows={filteredInvoices} />}
-      </div>
+      {loading ? <Loading /> : <DataTable columns={columns} rows={pageRows} />}
+
+      {filteredInvoices.length > 0 && (
+        <div className="mt-3 flex items-center justify-between text-sm text-slate-500">
+          <span>
+            Showing {(curPage - 1) * PAGE_SIZE + 1}–{Math.min(curPage * PAGE_SIZE, filteredInvoices.length)} of {filteredInvoices.length}
+          </span>
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="outline" disabled={curPage <= 1} onClick={() => setPage(curPage - 1)}>Previous</Button>
+            <span className="px-1 text-slate-600">Page {curPage} / {pageCount}</span>
+            <Button size="sm" variant="outline" disabled={curPage >= pageCount} onClick={() => setPage(curPage + 1)}>Next</Button>
+          </div>
+        </div>
+      )}
 
       {/* payment */}
       <Dialog open={openPay} onOpenChange={setOpenPay}>
