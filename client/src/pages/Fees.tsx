@@ -330,6 +330,15 @@ function InvoicesTab() {
           size="sm"
           className="ml-auto"
           disabled={!filteredInvoices.length}
+          title={listClass ? 'Export this class’s fee register as a PDF (Windows-safe)' : 'Export the fee register for all classes as a PDF (Windows-safe)'}
+          onClick={() => setPreview({ url: `/pdf/fee-register${listClass ? `?classId=${listClass}` : ''}`, filename: 'fee-register.pdf', title: listClass ? `Fee Register · Class ${classes?.find((c: any) => String(c.id) === listClass)?.name ?? ''}` : 'Fee Register · All Classes' })}
+        >
+          <FileText className="size-4" /> Export PDF
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={!filteredInvoices.length}
           title="Prints the listed bills 4 to an A4 sheet — no A6 paper needed; cut along the dashed lines"
           onClick={() => setPreview({ url: `/pdf/bills?ids=${filteredInvoices.map((r: any) => r.id).join(',')}`, filename: 'bills-4up.pdf', title: `Fee Bills · 4 per A4 (${filteredInvoices.length})` })}
         >

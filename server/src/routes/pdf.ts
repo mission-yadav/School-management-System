@@ -5,7 +5,7 @@ import { asyncHandler, AppError, intParam } from '../lib/http.js';
 import { streamPdf, letterhead, heading, signatureBlock, schoolNameFont, bodyFonts, BRAND, LOGO_PATH, type SchoolInfo } from '../lib/pdf.js';
 import { bsDate } from '../lib/nepaliDate.js';
 import { computeAudit, type Line } from '../lib/audit.js';
-import { getBillingPeriod, BS_MONTHS, type BSPeriod } from '../lib/ledger.js';
+import { getBillingPeriod, ensureAllLedgers, BS_MONTHS, type BSPeriod } from '../lib/ledger.js';
 
 /** "Up to Shrawan 2083" — the fee period the document covers (the billing month). */
 function upToLabel(period: BSPeriod) {
@@ -399,6 +399,156 @@ router.get('/bills', asyncHandler(async (req, res) => {
       chunk.forEach((inv, slot) => drawBillPanel(doc, quad[slot][0], quad[slot][1], school, inv, period));
     }
   }, { size: 'A4', margin: 0 });
+}));
+
+/** Break a ledger invoice's items into the fee-register columns. Month-wise tuition items
+ *  are summed under `monthly` (accumulated); the latest month's amount is the per-month `rate`. */
+function registerCells(inv: { items: { description: string; amount: number; bsMonth?: number | null; bsYear?: number | null }[] }) {
+  const c = { annual: 0, computer: 0, transport: 0, exam: 0, misc: 0, monthly: 0 };
+  const LABELS: Record<string, keyof typeof c> = {
+    'Annual Charge': 'annual', 'Computer Fee': 'computer', 'Transportation Charge': 'transport',
+    'Exam Fee': 'exam', 'Miscellaneous Charges': 'misc',
+  };
+  const months: { y: number; m: number; amount: number }[] = [];
+  for (const it of inv.items) {
+    if (it.description === 'Previous Dues') continue;
+    if (it.bsMonth) { c.monthly += it.amount; months.push({ y: it.bsYear || 0, m: it.bsMonth, amount: it.amount }); continue; }
+    const k = LABELS[it.description]; if (k) c[k] += it.amount;
+  }
+  months.sort((a, b) => (a.y - b.y) || (a.m - b.m));
+  const rate = months.length ? months[months.length - 1].amount : 0;
+  return { ...c, rate };
+}
+
+/** GET /api/pdf/fee-register?classId= — class-wise fee register (one row per student).
+ *  Mirrors the on-screen Bills & Ledgers table; no ₹ glyph (uses "Rs." like the bills). */
+router.get('/fee-register', asyncHandler(async (req, res) => {
+  const classId = req.query.classId ? intParam(String(req.query.classId), 'classId') : null;
+  const school = await getSchool();
+  const period = await getBillingPeriod();
+  await ensureAllLedgers();
+
+  const invoices = await prisma.feeInvoice.findMany({
+    where: { isLedger: true, ...(classId ? { student: { classId } } : {}) },
+    include: { items: true, payments: true, student: { include: { class: { select: { name: true, order: true } } } } },
+    orderBy: [{ student: { class: { order: 'asc' } } }, { student: { name: 'asc' } }],
+  });
+  if (!invoices.length) throw new AppError(404, 'No fee records found');
+
+  // group by class, preserving the class order from the query
+  const groups: { name: string; rows: any[] }[] = [];
+  for (const inv of invoices) {
+    const cname = inv.student.class?.name || 'Unassigned';
+    let g = groups.find((x) => x.name === cname);
+    if (!g) { g = { name: cname, rows: [] }; groups.push(g); }
+    const gross = inv.items.reduce((a, i) => a + i.amount, 0);
+    const total = gross + inv.fine - inv.discount;
+    const paid = inv.payments.reduce((a, p) => a + p.amount, 0);
+    const settled = paid + inv.payments.reduce((a, p) => a + (p.less || 0), 0);
+    g.rows.push({ name: inv.student.name, iemis: inv.student.iemis, feeFree: inv.student.feeFree, cls: cname, ...registerCells(inv), total, paid, due: total - settled });
+  }
+
+  const num = (n: number) => (n || 0).toLocaleString('en-IN');
+  const dash = (n: number) => (n ? n.toLocaleString('en-IN') : '—');
+
+  streamPdf(res, `fee-register${classId ? `-${(groups[0]?.name || '').replace(/\s+/g, '')}` : ''}.pdf`, (doc) => {
+    const { reg, bold } = bodyFonts(doc);
+    const startX = 30, W = doc.page.width;
+    const cols: { key: string; label: string; w: number; align: 'left' | 'right' }[] = [
+      { key: 'student', label: 'STUDENT', w: 190, align: 'left' },
+      { key: 'rate', label: 'MONTHLY', w: 66, align: 'right' },
+      { key: 'annual', label: 'ANNUAL', w: 60, align: 'right' },
+      { key: 'computer', label: 'COMPUTER', w: 66, align: 'right' },
+      { key: 'transport', label: 'TRANSPORT', w: 70, align: 'right' },
+      { key: 'exam', label: 'EXAM', w: 54, align: 'right' },
+      { key: 'misc', label: 'MISC', w: 54, align: 'right' },
+      { key: 'total', label: 'TOTAL', w: 74, align: 'right' },
+      { key: 'paid', label: 'PAID', w: 64, align: 'right' },
+      { key: 'due', label: 'DUES', w: 74, align: 'right' },
+    ];
+    const xAt = (i: number) => startX + cols.slice(0, i).reduce((a, c) => a + c.w, 0);
+    const bottom = doc.page.height - 34;
+    const PAD = 4, ROW_H = 24;
+
+    // ----- letterhead + title (first page only) -----
+    let y = letterhead(doc, school);
+    doc.fillColor(BRAND).font(bold).fontSize(14).text('Fee Register', startX, y, { align: 'center', width: W - 2 * startX });
+    doc.fillColor('#555').font(reg).fontSize(9)
+      .text(`${classId ? `Class ${groups[0]?.name}` : 'All Classes'}  ·  Up to ${BS_MONTHS[period.month - 1]} ${period.year} (BS)  ·  All amounts in Rs.`, startX, y + 19, { align: 'center', width: W - 2 * startX });
+    y += 42;
+
+    const drawHeader = () => {
+      doc.rect(startX, y, W - 2 * startX, 20).fill(BRAND);
+      doc.fillColor('white').font(bold).fontSize(8.5);
+      cols.forEach((c, i) => doc.text(c.label, xAt(i) + PAD, y + 6, { width: c.w - 2 * PAD, align: c.align, lineBreak: false }));
+      doc.fillColor('black'); y += 20;
+    };
+    const pageBreak = (need: number) => {
+      if (y + need <= bottom) return;
+      doc.addPage(); y = 34; drawHeader();
+    };
+
+    let gt = { total: 0, paid: 0, due: 0 };
+    for (const g of groups) {
+      pageBreak(24 + ROW_H);
+      // class band
+      doc.rect(startX, y, W - 2 * startX, 18).fill('#eeedf8');
+      doc.fillColor(BRAND).font(bold).fontSize(9.5).text(`Class ${g.name}`, startX + PAD, y + 5, { lineBreak: false });
+      doc.font(reg).fontSize(8).fillColor('#777').text(`${g.rows.length} student${g.rows.length === 1 ? '' : 's'}`, startX, y + 5, { width: W - 2 * startX - PAD, align: 'right', lineBreak: false });
+      doc.fillColor('black'); y += 18;
+      drawHeader();
+
+      let sub = { total: 0, paid: 0, due: 0 };
+      g.rows.forEach((r, idx) => {
+        pageBreak(ROW_H);
+        if (idx % 2 === 1) { doc.rect(startX, y, W - 2 * startX, ROW_H).fill('#f8fafc'); doc.fillColor('black'); }
+        // student cell: FREE tag + name, then class · IEMIS
+        const sx = xAt(0) + PAD, sw = cols[0].w - 2 * PAD;
+        doc.fontSize(8.5).font(bold);
+        let nx = sx;
+        if (r.feeFree) { doc.fillColor('#16a34a').text('FREE', sx, y + 4, { lineBreak: false }); nx = sx + doc.widthOfString('FREE') + 5; }
+        doc.fillColor('#111').text(r.name, nx, y + 4, { width: sx + sw - nx, lineBreak: false, ellipsis: true });
+        doc.font(reg).fontSize(6.5).fillColor('#94a3b8').text(`${r.cls} · IEMIS ${r.iemis || '—'}`, sx, y + 15, { width: sw, lineBreak: false, ellipsis: true });
+
+        const cells: [number, string, string | null][] = [
+          [1, dash(r.rate), null], [2, dash(r.annual), null], [3, dash(r.computer), null],
+          [4, dash(r.transport), null], [5, dash(r.exam), null], [6, dash(r.misc), null],
+          [7, num(r.total), '#111'], [8, num(r.paid), '#16a34a'], [9, num(r.due), r.due > 0 ? '#dc2626' : '#16a34a'],
+        ];
+        doc.fontSize(8.5).font(reg);
+        for (const [i, txt, color] of cells) {
+          doc.font(i >= 7 ? bold : reg).fillColor(color || '#334155')
+            .text(txt, xAt(i) + PAD, y + 8, { width: cols[i].w - 2 * PAD, align: 'right', lineBreak: false });
+        }
+        doc.fillColor('black');
+        sub.total += r.total; sub.paid += r.paid; sub.due += r.due;
+        y += ROW_H;
+        doc.moveTo(startX, y).lineTo(W - startX, y).lineWidth(0.4).strokeColor('#e2e8f0').stroke();
+      });
+
+      // class subtotal
+      pageBreak(ROW_H);
+      doc.rect(startX, y, W - 2 * startX, 20).fill('#f1f5f9');
+      doc.fillColor('#334155').font(bold).fontSize(8.5).text(`Class ${g.name} — subtotal (${g.rows.length})`, xAt(0) + PAD, y + 6, { lineBreak: false });
+      [[7, sub.total, '#111'], [8, sub.paid, '#16a34a'], [9, sub.due, sub.due > 0 ? '#dc2626' : '#16a34a']].forEach(([i, v, col]) =>
+        doc.fillColor(col as string).text(num(v as number), xAt(i as number) + PAD, y + 6, { width: cols[i as number].w - 2 * PAD, align: 'right', lineBreak: false }));
+      doc.fillColor('black'); y += 26;
+      gt.total += sub.total; gt.paid += sub.paid; gt.due += sub.due;
+    }
+
+    // grand total across classes (only meaningful for the all-classes export)
+    if (groups.length > 1) {
+      pageBreak(24);
+      doc.rect(startX, y, W - 2 * startX, 22).fill(BRAND);
+      doc.fillColor('white').font(bold).fontSize(9).text('GRAND TOTAL', xAt(0) + PAD, y + 7, { lineBreak: false });
+      [[7, gt.total], [8, gt.paid], [9, gt.due]].forEach(([i, v]) =>
+        doc.fillColor('white').text(num(v as number), xAt(i as number) + PAD, y + 7, { width: cols[i as number].w - 2 * PAD, align: 'right', lineBreak: false }));
+      doc.fillColor('black'); y += 30;
+    }
+
+    doc.font(reg).fontSize(7.5).fillColor('#94a3b8')
+      .text(`Generated ${bsDate(new Date())} (BS)  ·  ${school.name}`, startX, doc.page.height - 26, { width: W - 2 * startX, align: 'center', lineBreak: false });
+  }, { size: 'A4', margin: 30, layout: 'landscape' });
 }));
 
 /** GET /api/pdf/audit — NFRS Income & Expenditure Statement + Balance Sheet */

@@ -43,9 +43,9 @@ export function streamPdf(
   res: Response,
   filename: string,
   draw: (doc: PDFKit.PDFDocument) => void,
-  opts: { size?: string | [number, number]; margin?: number } = {},
+  opts: { size?: string | [number, number]; margin?: number; layout?: 'portrait' | 'landscape' } = {},
 ) {
-  const doc = new PDFDocument({ size: opts.size ?? 'A4', margin: opts.margin ?? 50 });
+  const doc = new PDFDocument({ size: opts.size ?? 'A4', margin: opts.margin ?? 50, layout: opts.layout ?? 'portrait' });
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
   doc.pipe(res);
