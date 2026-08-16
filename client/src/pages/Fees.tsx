@@ -58,15 +58,15 @@ export default function Fees() {
   const navigate = useNavigate();
   const tab = pathname.endsWith('/structure') ? 'structure' : 'invoices';
   return (
-    <div>
+    <div className="flex h-full flex-col">
       <PageHeader title="Fee Management" subtitle="Billing, collections & fee structure" />
-      <Tabs value={tab} onValueChange={(v) => navigate(v === 'structure' ? '/fees/structure' : '/fees')}>
+      <Tabs value={tab} onValueChange={(v) => navigate(v === 'structure' ? '/fees/structure' : '/fees')} className="flex min-h-0 flex-1 flex-col">
         <TabsList>
           <TabsTrigger value="invoices">Billing &amp; Ledgers</TabsTrigger>
           <TabsTrigger value="structure">Fee Structure</TabsTrigger>
         </TabsList>
-        <TabsContent value="invoices"><InvoicesTab /></TabsContent>
-        <TabsContent value="structure"><FeeStructureEditor /></TabsContent>
+        <TabsContent value="invoices" className="flex min-h-0 flex-1 flex-col"><InvoicesTab /></TabsContent>
+        <TabsContent value="structure" className="min-h-0 flex-1 overflow-y-auto"><FeeStructureEditor /></TabsContent>
       </Tabs>
     </div>
   );
@@ -297,10 +297,10 @@ function InvoicesTab() {
   ];
 
   return (
-    <div>
-      <div className="mb-4"><BillingMonthCard onAdvanced={reload} /></div>
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="mb-4 shrink-0"><BillingMonthCard onAdvanced={reload} /></div>
 
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3 shrink-0">
         <div className="grid flex-1 grid-cols-1 gap-3 sm:grid-cols-3">
           <Card><CardContent className="pt-5"><div className="text-sm text-slate-500">Total Billed</div><div className="text-2xl font-bold text-slate-800">{inr(summary?.billed || 0)}</div></CardContent></Card>
           <Card><CardContent className="pt-5"><div className="text-sm text-slate-500">Collected</div><div className="text-2xl font-bold text-green-600">{inr(summary?.collected || 0)}</div></CardContent></Card>
@@ -308,7 +308,7 @@ function InvoicesTab() {
         </div>
       </div>
 
-      <div className="mb-4 flex flex-wrap items-center gap-3">
+      <div className="mb-4 flex flex-wrap items-center gap-3 shrink-0">
         <Select value={listClass} onChange={(e) => setListClass(e.target.value)} className="w-40">
           <option value="">All Classes</option>
           {(classes || []).map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -327,7 +327,9 @@ function InvoicesTab() {
         </Button>
       </div>
 
-      {loading ? <Loading /> : <DataTable columns={columns} rows={filteredInvoices} />}
+      <div className="min-h-0 flex-1">
+        {loading ? <Loading /> : <DataTable fill columns={columns} rows={filteredInvoices} />}
+      </div>
 
       {/* payment */}
       <Dialog open={openPay} onOpenChange={setOpenPay}>
