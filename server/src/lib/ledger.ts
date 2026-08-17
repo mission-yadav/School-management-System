@@ -128,25 +128,28 @@ export async function ensureLedger(studentId: number, period?: BSPeriod): Promis
   const monthly = student.feeFree ? 0 : (s?.monthlyTuition ?? 0);
   const toCreate: any[] = [];
 
-  // A month is "covered" (no new tuition line) if any dated line already sits there — including a
-  // carried-forward "Previous Dues" opening balance, whose figure already includes that month's
-  // tuition, so adding a separate tuition line would double-count it. Computer Fee lines are
-  // excluded so their monthly cadence never suppresses tuition.
-  const coveredMonths = new Set(inv.items.filter((i) => i.bsMonth && !isComputerLine(i)).map((i) => `${i.bsYear}-${i.bsMonth}`));
+  // A carried-forward "Previous Dues" opening balance already includes that month's charges, so we
+  // never add a separate tuition or computer line for a month it covers (that would double-count).
+  const prevDuesMonths = new Set(inv.items.filter((i) => i.description === 'Previous Dues' && i.bsMonth != null).map((i) => `${i.bsYear}-${i.bsMonth}`));
+
+  const tuitionMonths = new Set(inv.items.filter(isTuitionLine).map((i) => `${i.bsYear}-${i.bsMonth}`));
   for (let m = 1; m <= month; m++) {
-    if (!coveredMonths.has(`${year}-${m}`))
+    const key = `${year}-${m}`;
+    if (!tuitionMonths.has(key) && !prevDuesMonths.has(key))
       toCreate.push({ invoiceId: inv.id, description: monthDesc(m, year, 'Tuition Fee'), amount: monthly, bsYear: year, bsMonth: m });
   }
 
-  // Computer Fee recurs monthly (same cadence as tuition). Older ledgers billed it once as a
-  // heading — drop that legacy one-time line so it isn't double-counted alongside the monthly ones.
+  // Computer Fee recurs monthly, exactly like tuition — charged only when the class has one, one
+  // line per elapsed month, and never for a month already inside Previous Dues. Drop any legacy
+  // one-time "Computer Fee" heading so it isn't double-counted alongside the monthly lines.
   if (inv.items.some((i) => i.bsMonth == null && i.description === 'Computer Fee'))
     await prisma.feeItem.deleteMany({ where: { invoiceId: inv.id, bsMonth: null, description: 'Computer Fee' } });
   const computer = s?.computerFee ?? 0;
   if (computer > 0) {
     const computerMonths = new Set(inv.items.filter(isComputerLine).map((i) => `${i.bsYear}-${i.bsMonth}`));
     for (let m = 1; m <= month; m++) {
-      if (!computerMonths.has(`${year}-${m}`))
+      const key = `${year}-${m}`;
+      if (!computerMonths.has(key) && !prevDuesMonths.has(key))
         toCreate.push({ invoiceId: inv.id, description: monthDesc(m, year, 'Computer Fee'), amount: computer, bsYear: year, bsMonth: m });
     }
   }
