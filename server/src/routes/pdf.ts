@@ -342,8 +342,8 @@ function drawReceiptPanel(doc: PDFKit.PDFDocument, ox: number, oy: number, schoo
   doc.fillColor(BRAND).font(bold).fontSize(13).text('FEE RECEIPT', L, y, { width: R - L, align: 'center' });
   doc.fillColor('black'); y += 19;
   doc.font(reg).fontSize(7.5).fillColor('#555')
-    .text(`Receipt No: ${payment.receiptNo}`, L, y)
-    .text(`Date: ${bsDate(payment.paidAt, true)}`, L, y, { width: R - L, align: 'right' });
+    .text(`Receipt No: ${payment.receiptNo}`, L, y, { lineBreak: false })
+    .text(`Date: ${bsDate(payment.paidAt)}`, L, y, { width: R - L, align: 'right', lineBreak: false });
   doc.fillColor('black'); y += 14;
 
   y = panelInfo(doc, L, R, y, reg, bold,
