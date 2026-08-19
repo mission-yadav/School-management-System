@@ -22,7 +22,10 @@
     "files": [
       "main.cjs",
       "db.runtime.json",
-      "build/**"
+      "build/**",
+      "!**/node_modules/sms/**",
+      "!**/release/**",
+      "!**/*.exe"
     ],
     "extraResources": [
       {

@@ -38,6 +38,16 @@ jobs:
           npm --prefix client install
           npm --prefix electron install
 
+      # npm links the root package (name "sms") into node_modules/sms, which points back at
+      # the repo root -> release/win-unpacked. electron-builder then tries to pack its own
+      # output recursively (the 30-min 7-Zip hang). Remove the self-links + any stale output.
+      - name: Remove self-referential links & stale output
+        shell: bash
+        run: |
+          rm -rf node_modules/sms electron/node_modules/sms server/node_modules/sms client/node_modules/sms || true
+          rm -rf release || true
+          echo "cleaned self-links and release/"
+
       - name: Write runtime config (db.runtime.json)
         shell: bash
         env:
