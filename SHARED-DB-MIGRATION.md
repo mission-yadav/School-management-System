@@ -20,9 +20,18 @@
   NOTE: Neon free tier auto-suspends -> first connection can throw P1001; just retry to wake it.
   To RE-RUN before go-live (dev.db changes): `prisma db push --force-reset` (retry on P1001) ->
   confirm empty -> `tsx prisma/migrate-devdb-to-neon.ts` -> `reset-sequences.sql`.
-- ⏳ **Phase 6/7 (build + release) — NEXT.** Needs: pooled URL (nice-to-have), version bump
-  (1.0.6 → 1.1.0), run `build-desktop.sh` with build env vars set, then publish to GitHub Releases
-  (outward-facing — confirm first). Auto-update will roll the shared-DB version to existing devices.
+- ✅ **Build pipeline chosen = GitHub Actions** (wine won't install on this Mac: needs sudo +
+  wine-stable is deprecated/Gatekeeper-blocked). Added `.github/workflows/desktop-release.yml`
+  (builds on windows-latest, publishes a DRAFT GitHub Release on `v*` tags). Version bumped to
+  1.1.0. All committed + pushed to branch `feat/shared-neon-db`.
+- ⏳ **Phase 6/7 remaining (user + me):**
+  1. `gh auth login` (interactive — user runs via `!`). [git push already works via stored creds]
+  2. Get the POOLED Neon URL; set it as the `DATABASE_URL` secret (directUrl stays direct).
+  3. I set 3 repo secrets from server/.env via `gh secret set` (DATABASE_URL, JWT_ACCESS_SECRET,
+     JWT_REFRESH_SECRET) — same values baked into every build.
+  4. Merge branch -> main, tag `v1.1.0`, push tag -> CI builds + creates a DRAFT release.
+  5. Download the draft's .exe, TEST on a Windows machine against Neon, then click "Publish
+     release" -> existing devices auto-update to the shared-DB version.
 
 ### Build-time env (for build-desktop.sh) — keep these consistent across ALL builds
 Every installer must bake the SAME `DATABASE_URL` + `JWT_ACCESS_SECRET` + `JWT_REFRESH_SECRET`

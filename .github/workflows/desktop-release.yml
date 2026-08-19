@@ -46,17 +46,18 @@ jobs:
         run: |
           node -e "const fs=require('fs');const need=['DATABASE_URL','JWT_ACCESS_SECRET','JWT_REFRESH_SECRET'];const o={};for(const k of need){if(!process.env[k]){console.error('  ERROR: missing secret '+k);process.exit(1);}o[k]=process.env[k];}fs.writeFileSync('electron/db.runtime.json',JSON.stringify(o,null,2));console.log('  wrote electron/db.runtime.json');"
 
-      - name: Build client (Vite)
-        run: npm --prefix client run build
-
-      - name: Build server (tsc)
-        run: npm --prefix server run build
-
+      # Generate the Prisma client BEFORE tsc — server code depends on its generated types.
       - name: Generate Prisma client (Windows engine)
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           DIRECT_DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: npm --prefix server run prisma:generate
+
+      - name: Build client (Vite)
+        run: npm --prefix client run build
+
+      - name: Build server (tsc)
+        run: npm --prefix server run build
 
       - name: Build & publish installer (electron-builder -> GitHub draft release)
         env:

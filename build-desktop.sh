@@ -24,14 +24,14 @@ node -e '
   console.log("  wrote electron/db.runtime.json for " + new URL(out.DATABASE_URL).host);
 '
 
-echo "==> 2/5  Building client (Vite)…"
+echo "==> 2/5  Generating Prisma client (native + windows engines)…"
+( cd server && npx prisma generate )   # must precede tsc — server code uses generated types
+
+echo "==> 3/5  Building client (Vite)…"
 ( cd client && npm run build )
 
-echo "==> 3/5  Building server (tsc)…"
+echo "==> 4/5  Building server (tsc)…"
 ( cd server && npm run build )
-
-echo "==> 4/5  Generating Prisma client (native + windows engines)…"
-( cd server && npx prisma generate )
 
 echo "==> 5/5  Packaging Windows installer (Electron 22 + NSIS)…"
 ( cd electron && npm install && npm run dist:win )
