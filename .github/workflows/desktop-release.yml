@@ -1,0 +1,64 @@
+name: Build & Publish Desktop
+
+# Builds the Windows installer on a Windows runner and uploads it to a GitHub Release
+# (as a DRAFT — review it, then click "Publish release" to roll it out via auto-update).
+#
+# Trigger by pushing a version tag that matches electron/package.json, e.g.:
+#   git tag v1.1.0 && git push origin v1.1.0
+# or run manually from the Actions tab (workflow_dispatch).
+#
+# Required repository secrets (Settings > Secrets and variables > Actions):
+#   DATABASE_URL         Neon POOLED connection string (?sslmode=require)
+#   JWT_ACCESS_SECRET    long random string (same across all builds)
+#   JWT_REFRESH_SECRET   long random string (same across all builds)
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write   # lets electron-builder create the GitHub Release
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: |
+          npm install
+          npm --prefix server install
+          npm --prefix client install
+          npm --prefix electron install
+
+      - name: Write runtime config (db.runtime.json)
+        shell: bash
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          JWT_ACCESS_SECRET: ${{ secrets.JWT_ACCESS_SECRET }}
+          JWT_REFRESH_SECRET: ${{ secrets.JWT_REFRESH_SECRET }}
+        run: |
+          node -e "const fs=require('fs');const need=['DATABASE_URL','JWT_ACCESS_SECRET','JWT_REFRESH_SECRET'];const o={};for(const k of need){if(!process.env[k]){console.error('  ERROR: missing secret '+k);process.exit(1);}o[k]=process.env[k];}fs.writeFileSync('electron/db.runtime.json',JSON.stringify(o,null,2));console.log('  wrote electron/db.runtime.json');"
+
+      - name: Build client (Vite)
+        run: npm --prefix client run build
+
+      - name: Build server (tsc)
+        run: npm --prefix server run build
+
+      - name: Generate Prisma client (Windows engine)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DIRECT_DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: npm --prefix server run prisma:generate
+
+      - name: Build & publish installer (electron-builder -> GitHub draft release)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm --prefix electron run dist:win -- --publish always
