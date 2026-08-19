@@ -23,6 +23,7 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+    timeout-minutes: 30   # electron-builder should finish in <10 min; fail fast if it hangs
     steps:
       - uses: actions/checkout@v4
 
@@ -59,7 +60,27 @@ jobs:
       - name: Build server (tsc)
         run: npm --prefix server run build
 
-      - name: Build & publish installer (electron-builder -> GitHub draft release)
+      # Build the installer locally on the runner (no electron-builder publisher — that step
+      # was hanging on the GitHub upload/prev-release fetch). DEBUG surfaces where it is.
+      - name: Build installer (electron-builder, no publish)
+        env:
+          DEBUG: electron-builder
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'   # don't attempt code signing
+        run: npm --prefix electron run dist:win -- --publish never
+
+      - name: Upload to a draft GitHub Release
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm --prefix electron run dist:win -- --publish always
+        run: |
+          ver=$(node -p "require('./electron/package.json').version")
+          tag="v$ver"
+          echo "Publishing assets for $tag"
+          ls -la release/*.exe release/*.blockmap release/latest.yml
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" release/*.exe release/*.blockmap release/latest.yml --clobber
+          else
+            gh release create "$tag" release/*.exe release/*.blockmap release/latest.yml \
+              --draft --title "$tag" \
+              --notes "Shared-database build. Download and test the .exe against Neon, then click **Publish release** to roll it out to all devices via auto-update."
+          fi
