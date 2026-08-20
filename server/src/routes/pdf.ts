@@ -2,7 +2,7 @@ import { Router } from 'express';
 import prisma from '../prisma.js';
 import { authRequired } from '../middleware/auth.js';
 import { asyncHandler, AppError, intParam } from '../lib/http.js';
-import { streamPdf, letterhead, heading, signatureBlock, schoolNameFont, bodyFonts, BRAND, LOGO_PATH, QR_PATH, type SchoolInfo } from '../lib/pdf.js';
+import { streamPdf, letterhead, heading, signatureBlock, schoolNameFont, bodyFonts, BRAND, LOGO_PATH, QR_PATH, SIGN_PATH, type SchoolInfo } from '../lib/pdf.js';
 import { bsDate } from '../lib/nepaliDate.js';
 import { computeAudit, type Line } from '../lib/audit.js';
 import { getBillingPeriod, ensureAllLedgers, BS_MONTHS, buildSerialMap, serialNo, type BSPeriod } from '../lib/ledger.js';
@@ -317,12 +317,15 @@ function romanClass(name: string | null | undefined): string {
 
 // buildSerialMap + serialNo are shared from ../lib/ledger.js (see imports).
 
-/** Accountant signature, pulled up from the very bottom of the quadrant. */
+/** Accountant signature (image) above the line, near the bottom-right of the quadrant. */
 function panelSignature(doc: PDFKit.PDFDocument, ox: number, oy: number, R: number, reg: string) {
-  const sy = oy + QH - 96;
+  const boxW = 120, x = R - boxW;
+  const lineY = oy + QH - CARD_MARGIN - 22; // sit near the bottom border, clear of the fee table
+  const sigW = 82, sigH = 40;
+  try { doc.image(SIGN_PATH, x + (boxW - sigW) / 2, lineY - sigH + 4, { fit: [sigW, sigH] }); } catch { /* signature optional */ }
   doc.fillColor('black').font(reg).fontSize(8)
-    .text('__________________', R - 120, sy, { width: 120, align: 'center' })
-    .text('Accountant', R - 120, sy + 11, { width: 120, align: 'center' });
+    .text('__________________', x, lineY, { width: boxW, align: 'center' })
+    .text('Accountant', x, lineY + 11, { width: boxW, align: 'center' });
 }
 
 /** Draw one intimation card inside a quarter-A4 quadrant at (ox, oy). */
@@ -561,7 +564,7 @@ router.get('/fee-register', asyncHandler(async (req, res) => {
     const xAt = (i: number) => startX + cols.slice(0, i).reduce((a, c) => a + c.w, 0);
     const bounds = cols.map((_, i) => xAt(i)).concat([startX + tableW]); // 11 vertical boundaries
     const contTop = 40, bottom = H - 44;
-    const PAD = 6, ROW_H = 30, HEAD_H = 24, BAND_H = 24, SUB_H = 28, GRAND_H = 30;
+    const PAD = 6, ROW_H = 16, HEAD_H = 16, BAND_H = 16, SUB_H = 18, GRAND_H = 20;
     const GRID = '#94a3b8', OUTER = BRAND;
 
     // ---- grid bookkeeping: verticals span [vertTop..y]; outer bold box spans [boxTop..y] ----
@@ -581,12 +584,12 @@ router.get('/fee-register', asyncHandler(async (req, res) => {
     const openBox = (title: string, sub: string) => {
       boxTop = y;
       doc.rect(startX, y, tableW, BAND_H).fill('#eeedf8');
-      doc.fillColor(BRAND).font(bold).fontSize(13).text(title, startX + PAD, y + 5, { lineBreak: false });
-      doc.font(reg).fontSize(9.5).fillColor('#6b7280').text(sub, startX, y + 7, { width: tableW - PAD, align: 'right', lineBreak: false });
+      doc.fillColor(BRAND).font(bold).fontSize(11).text(title, startX + PAD, y + 4, { lineBreak: false });
+      doc.font(reg).fontSize(9).fillColor('#6b7280').text(sub, startX, y + 6, { width: tableW - PAD, align: 'right', lineBreak: false });
       y += BAND_H;
       doc.rect(startX, y, tableW, HEAD_H).fill(BRAND);
-      doc.fillColor('white').font(bold).fontSize(9);
-      cols.forEach((c, i) => doc.text(c.label, xAt(i) + PAD - 1, y + 8, { width: c.w - 2 * PAD + 2, align: c.align, lineBreak: false }));
+      doc.fillColor('white').font(bold).fontSize(8.5);
+      cols.forEach((c, i) => doc.text(c.label, xAt(i) + PAD - 1, y + 6, { width: c.w - 2 * PAD + 2, align: c.align, lineBreak: false }));
       doc.save().lineWidth(0.5).strokeColor('#ffffff'); // white separators inside the header band
       for (let i = 1; i < bounds.length - 1; i++) doc.moveTo(bounds[i], y).lineTo(bounds[i], y + HEAD_H).stroke();
       doc.restore();
@@ -595,12 +598,14 @@ router.get('/fee-register', asyncHandler(async (req, res) => {
       hline(y, 1.2, OUTER);
     };
 
-    // ----- letterhead + title (first page only) -----
-    y = letterhead(doc, school);
-    doc.fillColor(BRAND).font(bold).fontSize(18).text('Fee Register', startX, y, { align: 'center', width: tableW });
-    doc.fillColor('#555').font(reg).fontSize(11)
-      .text(`${classId ? `Class ${groups[0]?.name}` : 'All Classes'}   ·   Up to ${BS_MONTHS[period.month - 1]} ${period.year} (BS)   ·   All amounts in Rs.`, startX, y + 24, { align: 'center', width: tableW });
-    y += 50;
+    // ----- compact header (first page only) — small so page 1 fits ~as many rows as later pages -----
+    y = contTop;
+    try { doc.image(LOGO_PATH, startX, y, { fit: [34, 34] }); } catch { /* logo optional */ }
+    doc.fillColor(BRAND).font(schoolNameFont(doc)).fontSize(17).text(school.name, startX + 42, y + 3, { lineBreak: false });
+    doc.fillColor(BRAND).font(bold).fontSize(14).text('Fee Register', startX, y, { width: tableW, align: 'right' });
+    doc.fillColor('#6b7280').font(reg).fontSize(9.5)
+      .text(`${classId ? `Class ${groups[0]?.name}` : 'All Classes'}  ·  Up to ${BS_MONTHS[period.month - 1]} ${period.year} (BS)  ·  All amounts in Rs.`, startX, y + 20, { width: tableW, align: 'right' });
+    y += 42;
 
     const newPage = (title: string, sub: string) => { flush(); doc.addPage(); y = contTop; openBox(title, sub); };
 
@@ -616,11 +621,11 @@ router.get('/fee-register', asyncHandler(async (req, res) => {
         if (idx % 2 === 1) { doc.rect(startX, y, tableW, ROW_H).fill('#f5f7fb'); doc.fillColor('black'); }
         // student cell: FREE tag + name, then class · IEMIS
         const sx = xAt(0) + PAD, sw = cols[0].w - 2 * PAD;
-        doc.fontSize(11).font(bold);
+        doc.fontSize(9.5).font(bold);
         let nx = sx;
-        if (r.feeFree) { doc.fillColor('#16a34a').text('FREE', sx, y + 6, { lineBreak: false }); nx = sx + doc.widthOfString('FREE') + 5; }
-        doc.fillColor('#111').text(r.name, nx, y + 6, { width: sx + sw - nx, lineBreak: false, ellipsis: true });
-        doc.font(reg).fontSize(8).fillColor('#94a3b8').text(`${r.cls} · IEMIS ${r.iemis || '—'}`, sx, y + 19, { width: sw, lineBreak: false, ellipsis: true });
+        if (r.feeFree) { doc.fillColor('#16a34a').text('FREE', sx, y + 2, { lineBreak: false }); nx = sx + doc.widthOfString('FREE') + 5; }
+        doc.fillColor('#111').text(r.name, nx, y + 2, { width: sx + sw - nx, lineBreak: false, ellipsis: true });
+        doc.font(reg).fontSize(6.5).fillColor('#94a3b8').text(`${r.cls} · IEMIS ${r.iemis || '—'}`, sx, y + 9, { width: sw, lineBreak: false, ellipsis: true });
 
         const cells: [number, string, string | null][] = [
           [1, dash(r.rate), null], [2, dash(r.annual), null], [3, dash(r.computer), null],
@@ -628,8 +633,8 @@ router.get('/fee-register', asyncHandler(async (req, res) => {
           [7, num(r.total), '#111'], [8, num(r.paid), '#16a34a'], [9, num(r.due), r.due > 0 ? '#dc2626' : '#16a34a'],
         ];
         for (const [i, txt, color] of cells) {
-          doc.font(i >= 7 ? bold : reg).fontSize(11).fillColor(color || '#334155')
-            .text(txt, xAt(i) + PAD, y + 9, { width: cols[i].w - 2 * PAD, align: 'right', lineBreak: false });
+          doc.font(i >= 7 ? bold : reg).fontSize(9.5).fillColor(color || '#334155')
+            .text(txt, xAt(i) + PAD, y + 4, { width: cols[i].w - 2 * PAD, align: 'right', lineBreak: false });
         }
         doc.fillColor('black');
         sub.total += r.total; sub.paid += r.paid; sub.due += r.due;
@@ -641,9 +646,9 @@ router.get('/fee-register', asyncHandler(async (req, res) => {
       if (y + SUB_H > bottom) newPage(`Class ${g.name} (cont.)`, countLabel);
       hline(y, 1.2, OUTER);
       doc.rect(startX, y, tableW, SUB_H).fill('#eef1f7');
-      doc.fillColor('#1e293b').font(bold).fontSize(11.5).text(`Class ${g.name} — subtotal (${g.rows.length})`, xAt(0) + PAD, y + 8, { lineBreak: false });
+      doc.fillColor('#1e293b').font(bold).fontSize(10).text(`Class ${g.name} — subtotal (${g.rows.length})`, xAt(0) + PAD, y + 6, { lineBreak: false });
       [[7, sub.total, '#111'], [8, sub.paid, '#16a34a'], [9, sub.due, sub.due > 0 ? '#dc2626' : '#16a34a']].forEach(([i, v, col]) =>
-        doc.fillColor(col as string).text(num(v as number), xAt(i as number) + PAD, y + 8, { width: cols[i as number].w - 2 * PAD, align: 'right', lineBreak: false }));
+        doc.fillColor(col as string).text(num(v as number), xAt(i as number) + PAD, y + 6, { width: cols[i as number].w - 2 * PAD, align: 'right', lineBreak: false }));
       doc.fillColor('black'); y += SUB_H;
       flush(); // close this class's grid box
       y += 12; // gap before next class
@@ -655,9 +660,9 @@ router.get('/fee-register', asyncHandler(async (req, res) => {
       if (y + GRAND_H > bottom) { doc.addPage(); y = contTop; }
       doc.rect(startX, y, tableW, GRAND_H).fill(BRAND);
       doc.save().lineWidth(2).strokeColor(OUTER).rect(startX, y, tableW, GRAND_H).stroke().restore();
-      doc.fillColor('white').font(bold).fontSize(12.5).text('GRAND TOTAL', xAt(0) + PAD, y + 9, { lineBreak: false });
+      doc.fillColor('white').font(bold).fontSize(11).text('GRAND TOTAL', xAt(0) + PAD, y + 7, { lineBreak: false });
       [[7, gt.total], [8, gt.paid], [9, gt.due]].forEach(([i, v]) =>
-        doc.fillColor('white').text(num(v as number), xAt(i as number) + PAD, y + 9, { width: cols[i as number].w - 2 * PAD, align: 'right', lineBreak: false }));
+        doc.fillColor('white').text(num(v as number), xAt(i as number) + PAD, y + 7, { width: cols[i as number].w - 2 * PAD, align: 'right', lineBreak: false }));
       doc.fillColor('black'); y += GRAND_H + 6;
     }
 

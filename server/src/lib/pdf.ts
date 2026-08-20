@@ -7,6 +7,7 @@ const BRAND = '#262081';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const LOGO_PATH = path.join(__dirname, '..', '..', 'assets', 'logo.png');
 export const QR_PATH = path.join(__dirname, '..', '..', 'assets', 'pay-qr.jpg');
+export const SIGN_PATH = path.join(__dirname, '..', '..', 'assets', 'signature.png');
 const NAME_FONT_PATH = path.join(__dirname, '..', '..', 'assets', 'fonts', 'vipnagorgialla-bold.otf');
 
 const BODY_FONT_PATH = path.join(__dirname, '..', '..', 'assets', 'fonts', 'DejaVuSans.ttf');
