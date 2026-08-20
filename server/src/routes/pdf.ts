@@ -276,10 +276,10 @@ function panelInfo(doc: PDFKit.PDFDocument, L: number, R: number, y: number, reg
 
 /** Compact centred card title inside a thick brand border box. Returns the y to continue from. */
 function titleBox(doc: PDFKit.PDFDocument, L: number, R: number, y: number, bold: string, text: string): number {
-  const size = 11;
+  const size = 9.5;
   doc.font(bold).fontSize(size);
   const tW = doc.widthOfString(text);
-  const bpX = 12, bpY = 4, boxW = tW + bpX * 2, boxH = size + bpY * 2;
+  const bpX = 10, bpY = 3, boxW = tW + bpX * 2, boxH = size + bpY * 2;
   const boxX = L + (R - L - boxW) / 2;
   doc.lineWidth(2).strokeColor(BRAND).rect(boxX, y, boxW, boxH).stroke();
   doc.fillColor(BRAND).text(text, boxX, y + bpY, { width: boxW, align: 'center' });
