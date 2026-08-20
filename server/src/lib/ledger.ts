@@ -159,14 +159,17 @@ export async function ensureLedger(studentId: number, period?: BSPeriod): Promis
   const monthly = student.feeFree ? 0 : (latestTuitionAmount(inv.items) ?? s?.monthlyTuition ?? 0);
   const toCreate: any[] = [];
 
-  // A carried-forward "Previous Dues" opening balance already includes that month's charges, so we
-  // never add a separate tuition or computer line for a month it covers (that would double-count).
-  const prevDuesMonths = new Set(inv.items.filter((i) => i.description === 'Previous Dues' && i.bsMonth != null).map((i) => `${i.bsYear}-${i.bsMonth}`));
+  // A consolidated "Previous Dues" line represents ALL charges up to and including the month it is
+  // stored at — so never re-accrue tuition/computer for any month at or before it. (Previously only
+  // the exact stored month was skipped, so earlier months were re-added on every save/accrual.)
+  const prevDuesItems = inv.items.filter((i) => i.description === 'Previous Dues' && i.bsMonth != null);
+  const prevDuesCutoff = prevDuesItems.reduce((mx, i) => Math.max(mx, i.bsYear! * 12 + i.bsMonth!), 0);
+  const coveredByPrevDues = (y: number, m: number) => prevDuesCutoff > 0 && y * 12 + m <= prevDuesCutoff;
 
   const tuitionMonths = new Set(inv.items.filter(isTuitionLine).map((i) => `${i.bsYear}-${i.bsMonth}`));
   for (let m = 1; m <= month; m++) {
     const key = `${year}-${m}`;
-    if (!tuitionMonths.has(key) && !prevDuesMonths.has(key))
+    if (!tuitionMonths.has(key) && !coveredByPrevDues(year, m))
       toCreate.push({ invoiceId: inv.id, description: monthDesc(m, year, 'Tuition Fee'), amount: monthly, bsYear: year, bsMonth: m });
   }
 
@@ -180,7 +183,7 @@ export async function ensureLedger(studentId: number, period?: BSPeriod): Promis
     const computerMonths = new Set(inv.items.filter(isComputerLine).map((i) => `${i.bsYear}-${i.bsMonth}`));
     for (let m = 1; m <= month; m++) {
       const key = `${year}-${m}`;
-      if (!computerMonths.has(key) && !prevDuesMonths.has(key))
+      if (!computerMonths.has(key) && !coveredByPrevDues(year, m))
         toCreate.push({ invoiceId: inv.id, description: monthDesc(m, year, 'Computer Fee'), amount: computer, bsYear: year, bsMonth: m });
     }
   }
@@ -251,11 +254,14 @@ export async function ensureAllLedgers(): Promise<void> {
     // Carry the student's current individual monthly tuition forward (see latestTuitionAmount).
     const monthly = student.feeFree ? 0 : (latestTuitionAmount(items) ?? s?.monthlyTuition ?? 0);
 
-    const prevDuesMonths = new Set(items.filter((i) => i.description === 'Previous Dues' && i.bsMonth != null).map((i) => `${i.bsYear}-${i.bsMonth}`));
+    // "Previous Dues" covers ALL months up to and including its stored month (not just that month).
+    const prevDuesItems = items.filter((i) => i.description === 'Previous Dues' && i.bsMonth != null);
+    const prevDuesCutoff = prevDuesItems.reduce((mx, i) => Math.max(mx, i.bsYear! * 12 + i.bsMonth!), 0);
+    const coveredByPrevDues = (y: number, mm: number) => prevDuesCutoff > 0 && y * 12 + mm <= prevDuesCutoff;
     const tuitionMonths = new Set(items.filter(isTuitionLine).map((i) => `${i.bsYear}-${i.bsMonth}`));
     for (let m = 1; m <= month; m++) {
       const key = `${year}-${m}`;
-      if (!tuitionMonths.has(key) && !prevDuesMonths.has(key))
+      if (!tuitionMonths.has(key) && !coveredByPrevDues(year, m))
         itemsToCreate.push({ invoiceId: inv.id, description: monthDesc(m, year, 'Tuition Fee'), amount: monthly, bsYear: year, bsMonth: m });
     }
 
@@ -265,7 +271,7 @@ export async function ensureAllLedgers(): Promise<void> {
       const computerMonths = new Set(items.filter(isComputerLine).map((i) => `${i.bsYear}-${i.bsMonth}`));
       for (let m = 1; m <= month; m++) {
         const key = `${year}-${m}`;
-        if (!computerMonths.has(key) && !prevDuesMonths.has(key))
+        if (!computerMonths.has(key) && !coveredByPrevDues(year, m))
           itemsToCreate.push({ invoiceId: inv.id, description: monthDesc(m, year, 'Computer Fee'), amount: computer, bsYear: year, bsMonth: m });
       }
     }
