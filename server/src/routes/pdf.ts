@@ -5,7 +5,7 @@ import { asyncHandler, AppError, intParam } from '../lib/http.js';
 import { streamPdf, letterhead, heading, signatureBlock, schoolNameFont, bodyFonts, BRAND, LOGO_PATH, QR_PATH, type SchoolInfo } from '../lib/pdf.js';
 import { bsDate } from '../lib/nepaliDate.js';
 import { computeAudit, type Line } from '../lib/audit.js';
-import { getBillingPeriod, ensureAllLedgers, BS_MONTHS, type BSPeriod } from '../lib/ledger.js';
+import { getBillingPeriod, ensureAllLedgers, BS_MONTHS, buildSerialMap, serialNo, type BSPeriod } from '../lib/ledger.js';
 
 /** "Up to Shrawan 2083" — the fee period the document covers (the billing month). */
 function upToLabel(period: BSPeriod) {
@@ -315,19 +315,7 @@ function romanClass(name: string | null | undefined): string {
   return /^\d+$/.test(t) ? toRoman(Number(t)) : (t || '—');
 }
 
-/** Map studentId -> serial number (S.N.), assigned 1..N by class order DESCENDING (highest class
- *  first, e.g. 9 -> P.G.) then name A-Z. One query; reused for a whole sheet. */
-async function buildSerialMap(): Promise<Map<number, number>> {
-  const all = await prisma.student.findMany({ select: { id: true, name: true, class: { select: { order: true } } } });
-  all.sort((a, b) => (b.class?.order ?? -1) - (a.class?.order ?? -1) || a.name.localeCompare(b.name));
-  const m = new Map<number, number>();
-  all.forEach((s, i) => m.set(s.id, i + 1));
-  return m;
-}
-/** Format a bill/receipt number as "JSS-<SN>/<billing year>", e.g. JSS-01/2083 (SN min 2 digits). */
-function serialNo(sn: number | undefined, year: number): string {
-  return `JSS-${String(sn || 0).padStart(2, '0')}/${year}`;
-}
+// buildSerialMap + serialNo are shared from ../lib/ledger.js (see imports).
 
 /** Accountant signature, pulled up from the very bottom of the quadrant. */
 function panelSignature(doc: PDFKit.PDFDocument, ox: number, oy: number, R: number, reg: string) {

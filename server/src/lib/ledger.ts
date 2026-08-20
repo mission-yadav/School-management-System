@@ -9,6 +9,20 @@ export const BS_MONTHS = ['Baisakh', 'Jestha', 'Asar', 'Shrawan', 'Bhadra', 'Ash
 
 export type BSPeriod = { year: number; month: number };
 
+/** Map studentId -> serial number (S.N.), assigned 1..N by class order DESCENDING
+ *  (highest class first, e.g. 9 -> P.G.) then name A-Z. One query; reused for a whole request. */
+export async function buildSerialMap(): Promise<Map<number, number>> {
+  const all = await prisma.student.findMany({ select: { id: true, name: true, class: { select: { order: true } } } });
+  all.sort((a, b) => (b.class?.order ?? -1) - (a.class?.order ?? -1) || a.name.localeCompare(b.name));
+  const m = new Map<number, number>();
+  all.forEach((s, i) => m.set(s.id, i + 1));
+  return m;
+}
+/** Format a bill/receipt number as "JSS-<SN>/<billing year>", e.g. JSS-01/2083 (SN min 2 digits). */
+export function serialNo(sn: number | undefined, year: number): string {
+  return `JSS-${String(sn || 0).padStart(2, '0')}/${year}`;
+}
+
 /** Real-world current Bikram Sambat year and month (1-indexed), from today's date. */
 export function currentBS(): BSPeriod {
   const bs = new NepaliDate(new Date()).getBS();

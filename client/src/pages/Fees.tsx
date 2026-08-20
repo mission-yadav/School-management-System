@@ -262,7 +262,7 @@ function InvoicesTab() {
       const res = await api.post(`/fees/${payRow.id}/pay`, { amount: Number(pay.amount || 0), less: Number(pay.less || 0), method: pay.method, reference: pay.reference });
       const { receiptNo, paymentId } = res.data || {};
       toast(`Payment recorded · ${receiptNo}`); setOpenPay(false); reload();
-      if (printReceipt && paymentId) setPreview({ url: `/pdf/receipt/${paymentId}`, filename: `${receiptNo}.pdf`, title: 'Fee Receipt' });
+      if (printReceipt && paymentId) setPreview({ url: `/pdf/receipt/${paymentId}`, filename: `${String(receiptNo).replace(/\//g, '-')}.pdf`, title: 'Fee Receipt' });
     } catch (e) { toast(apiError(e), 'error'); }
   }
 
