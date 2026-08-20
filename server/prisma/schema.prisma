@@ -3,6 +3,9 @@ generator client {
   // "native" for local dev on this machine; "windows" so the packaged Windows app
   // ships the Windows query engine.
   binaryTargets = ["native", "windows"]
+  // driverAdapters: connect through node-postgres (Node's TLS/BoringSSL) instead of the
+  // engine's native TLS (Windows Schannel), which fails the Neon handshake on Windows 7.
+  previewFeatures = ["driverAdapters"]
 }
 
 datasource db {
