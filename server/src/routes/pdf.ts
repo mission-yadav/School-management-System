@@ -180,12 +180,13 @@ router.get('/receipt/:paymentId', asyncHandler(async (req, res) => {
   const paymentId = intParam(req.params.paymentId, 'paymentId');
   const payment = await prisma.payment.findUnique({
     where: { id: paymentId },
-    include: { invoice: { include: { items: true, payments: true, student: { include: { class: { select: { name: true } } } } } } },
+    include: { invoice: { include: { items: true, payments: true, student: { include: { class: { select: { name: true } }, parent: true } } } } },
   });
   if (!payment) throw new AppError(404, 'Payment not found');
   const school = await getSchool();
   const period = await getBillingPeriod();
   const inv = payment.invoice;
+  await attachRoll(inv.student); // class-wise alphabetical roll
 
   // A4 sheet, one quarter filled (top-left) with the receipt card, rest blank, bordered + cut guides.
   streamPdf(res, `${payment.receiptNo}.pdf`, (doc) => {
@@ -205,14 +206,7 @@ router.get('/intimation/:invoiceId', asyncHandler(async (req, res) => {
   const school = await getSchool();
   const period = await getBillingPeriod();
 
-  // Roll number = the student's position among classmates ordered alphabetically by name.
-  if (inv.student.classId != null) {
-    const mates = await prisma.student.findMany({ where: { classId: inv.student.classId }, select: { id: true }, orderBy: { name: 'asc' } });
-    const idx = mates.findIndex((m) => m.id === inv.student.id);
-    (inv.student as any)._roll = idx >= 0 ? String(idx + 1) : (inv.student.rollNo || '—');
-  } else {
-    (inv.student as any)._roll = inv.student.rollNo || '—';
-  }
+  await attachRoll(inv.student); // class-wise alphabetical roll
 
   // A4 sheet laid out as 4 quarters — one filled (top-left), the rest blank, with
   // bold card borders and cut guides. Always prints at 1/4 size.
@@ -230,12 +224,13 @@ const CARD_PAD = 34;    // content inset (sits inside the border with a gap)
 function panelHead(doc: PDFKit.PDFDocument, ox: number, oy: number, L: number, R: number, school: SchoolInfo, reg: string) {
   const nameFont = schoolNameFont(doc);
   const top = oy + CARD_PAD; // clear of the card border
-  try { doc.image(LOGO_PATH, L, top, { fit: [38, 38] }); } catch { /* logo optional */ }
-  const hx = L + 46;
-  let ns = 13;
+  // Smaller logo leaves more width so the school name can be bigger and bolder (still one line).
+  try { doc.image(LOGO_PATH, L, top + 2, { fit: [30, 30] }); } catch { /* logo optional */ }
+  const hx = L + 36;
+  let ns = 18;
   doc.font(nameFont).fontSize(ns);
-  while (ns > 7 && doc.widthOfString(school.name) > R - hx) { ns -= 0.5; doc.fontSize(ns); }
-  doc.fillColor(BRAND).font(nameFont).fontSize(ns).text(school.name, hx, top + 1, { lineBreak: false });
+  while (ns > 10 && doc.widthOfString(school.name) > R - hx) { ns -= 0.5; doc.fontSize(ns); }
+  doc.fillColor(BRAND).font(nameFont).fontSize(ns).text(school.name, hx, top, { lineBreak: false });
   // sub-line: as big as fits on one line within the panel width
   const sub = [school.address, school.pan && `PAN: ${school.pan}`, school.phone && `Contact: ${school.phone}`].filter(Boolean).join('  |  ');
   let ss = 7;
@@ -279,6 +274,30 @@ function panelInfo(doc: PDFKit.PDFDocument, L: number, R: number, y: number, reg
   return y + 3;
 }
 
+/** Compact centred card title inside a thick brand border box. Returns the y to continue from. */
+function titleBox(doc: PDFKit.PDFDocument, L: number, R: number, y: number, bold: string, text: string): number {
+  const size = 11;
+  doc.font(bold).fontSize(size);
+  const tW = doc.widthOfString(text);
+  const bpX = 12, bpY = 4, boxW = tW + bpX * 2, boxH = size + bpY * 2;
+  const boxX = L + (R - L - boxW) / 2;
+  doc.lineWidth(2).strokeColor(BRAND).rect(boxX, y, boxW, boxH).stroke();
+  doc.fillColor(BRAND).text(text, boxX, y + bpY, { width: boxW, align: 'center' });
+  doc.lineWidth(1).fillColor('black');
+  return y + boxH + 6;
+}
+
+/** Attach a class-wise alphabetical roll number to a student (mutates student._roll). */
+async function attachRoll(student: any): Promise<void> {
+  if (student.classId != null) {
+    const mates = await prisma.student.findMany({ where: { classId: student.classId }, select: { id: true }, orderBy: { name: 'asc' } });
+    const idx = mates.findIndex((m) => m.id === student.id);
+    student._roll = idx >= 0 ? String(idx + 1) : (student.rollNo || '—');
+  } else {
+    student._roll = student.rollNo || '—';
+  }
+}
+
 /** Convert 1..3999 to a Roman numeral. */
 function toRoman(n: number): string {
   if (!Number.isInteger(n) || n <= 0 || n >= 4000) return String(n);
@@ -307,15 +326,7 @@ function drawBillPanel(doc: PDFKit.PDFDocument, ox: number, oy: number, school: 
   const { reg, bold } = bodyFonts(doc);
 
   let y = panelHead(doc, ox, oy, L, R, school, reg);
-  // Compact title inside a thick brand border box, centred in the card.
-  const titleSize = 11;
-  doc.font(bold).fontSize(titleSize);
-  const tW = doc.widthOfString('INTIMATION CARD');
-  const bpX = 12, bpY = 4, boxW = tW + bpX * 2, boxH = titleSize + bpY * 2;
-  const boxX = L + (R - L - boxW) / 2;
-  doc.lineWidth(2).strokeColor(BRAND).rect(boxX, y, boxW, boxH).stroke();
-  doc.fillColor(BRAND).text('INTIMATION CARD', boxX, y + bpY, { width: boxW, align: 'center' });
-  doc.lineWidth(1).fillColor('black'); y += boxH + 6;
+  y = titleBox(doc, L, R, y, bold, 'INTIMATION CARD');
 
   doc.font(reg).fontSize(7.5).fillColor('#555')
     .text(`Bill No: JSS-${String(inv.id).padStart(5, '0')}`, L, y)
@@ -327,8 +338,8 @@ function drawBillPanel(doc: PDFKit.PDFDocument, ox: number, oy: number, school: 
   const contact = st.parent?.phone || st.phone || st.emergencyContact || '—';
   const roll = (st as any)._roll || st.rollNo || '—';
   y = panelInfo(doc, L, R, y, reg, bold,
-    [['Student', st.name, true], ['Roll No', roll], ["Father's Name", father], ['Contact', contact]],
-    [['Class', romanClass(st.class?.name)], ['IEMIS ID', st.iemis || '—'], ['Fee For', upToLabel(period), true]]);
+    [['Student', st.name, true], ['Roll No', roll], ["Father's Name", father], ['IEMIS ID', st.iemis || '—']],
+    [['Class', romanClass(st.class?.name)], ['Contact', contact], ['Fee For', upToLabel(period), true]]);
 
   const gross = inv.items.reduce((a: number, i: any) => a + i.amount, 0);
   const total = gross + inv.fine - inv.discount;
@@ -376,16 +387,19 @@ function drawReceiptPanel(doc: PDFKit.PDFDocument, ox: number, oy: number, schoo
   const balanceDue = total - settledToDate;
 
   let y = panelHead(doc, ox, oy, L, R, school, reg);
-  doc.fillColor(BRAND).font(bold).fontSize(13).text('FEE RECEIPT', L, y, { width: R - L, align: 'center' });
-  doc.fillColor('black'); y += 19;
+  y = titleBox(doc, L, R, y, bold, 'FEE RECEIPT');
   doc.font(reg).fontSize(7.5).fillColor('#555')
     .text(`Receipt No: ${payment.receiptNo}`, L, y, { lineBreak: false })
     .text(`Date: ${bsDate(payment.paidAt)}`, L, y, { width: R - L, align: 'right', lineBreak: false });
   doc.fillColor('black'); y += 14;
 
+  const st = inv.student;
+  const father = st.parent?.name || '—';
+  const contact = st.parent?.phone || st.phone || st.emergencyContact || '—';
+  const roll = (st as any)._roll || st.rollNo || '—';
   y = panelInfo(doc, L, R, y, reg, bold,
-    [['Student', inv.student.name], ['IEMIS ID', inv.student.iemis || '—']],
-    [['Class', inv.student.class?.name || '—'], ['Fee For', upToLabel(period)]]);
+    [['Student', st.name, true], ['Roll No', roll], ["Father's Name", father], ['IEMIS ID', st.iemis || '—']],
+    [['Class', romanClass(st.class?.name)], ['Contact', contact], ['Fee For', upToLabel(period), true]]);
 
   const gridRow = billGridRow(doc, L, R, () => y, (ny) => { y = ny; }, reg, bold);
   gridRow('Description', 'Amount (Rs.)', { header: true });
