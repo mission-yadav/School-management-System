@@ -104,6 +104,21 @@ export const isTuitionLine = (i: { description: string; bsMonth?: number | null 
 export const isComputerLine = (i: { description: string; bsMonth?: number | null }) => i.bsMonth != null && i.description.endsWith('Computer Fee');
 
 /**
+ * The student's current per-month tuition rate = the amount of their most recent tuition line.
+ * New months inherit this, so an individually-set amount carries forward every month until it's
+ * changed again — the month advance no longer snaps it back to the class's common fee.
+ * Returns undefined when there are no tuition lines yet (brand-new ledger -> use class default).
+ */
+function latestTuitionAmount(items: { description: string; bsYear?: number | null; bsMonth?: number | null; amount: number }[]): number | undefined {
+  const tuition = items.filter(isTuitionLine);
+  if (!tuition.length) return undefined;
+  const latest = tuition.reduce((a, b) =>
+    (b.bsYear! > a.bsYear!) || (b.bsYear! === a.bsYear! && b.bsMonth! > a.bsMonth!) ? b : a
+  );
+  return latest.amount;
+}
+
+/**
  * Ensure a student has a running fee ledger (one FeeInvoice, isLedger=true) and that it
  * has a monthly-tuition line for every BS month elapsed this session + the standard headings.
  * Returns the ledger invoice id. Never overwrites amounts that already exist (they stay editable).
@@ -125,7 +140,9 @@ export async function ensureLedger(studentId: number, period?: BSPeriod): Promis
   }
 
   const s = student.class?.feeStructure;
-  const monthly = student.feeFree ? 0 : (s?.monthlyTuition ?? 0);
+  // Carry the student's current individual monthly tuition forward (their latest tuition line),
+  // falling back to the class default only for a brand-new ledger.
+  const monthly = student.feeFree ? 0 : (latestTuitionAmount(inv.items) ?? s?.monthlyTuition ?? 0);
   const toCreate: any[] = [];
 
   // A carried-forward "Previous Dues" opening balance already includes that month's charges, so we
@@ -217,7 +234,8 @@ export async function ensureAllLedgers(): Promise<void> {
     if (!inv) continue;
     const s = student.class?.feeStructure;
     const items = inv.items;
-    const monthly = student.feeFree ? 0 : (s?.monthlyTuition ?? 0);
+    // Carry the student's current individual monthly tuition forward (see latestTuitionAmount).
+    const monthly = student.feeFree ? 0 : (latestTuitionAmount(items) ?? s?.monthlyTuition ?? 0);
 
     const prevDuesMonths = new Set(items.filter((i) => i.description === 'Previous Dues' && i.bsMonth != null).map((i) => `${i.bsYear}-${i.bsMonth}`));
     const tuitionMonths = new Set(items.filter(isTuitionLine).map((i) => `${i.bsYear}-${i.bsMonth}`));
