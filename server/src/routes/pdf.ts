@@ -141,7 +141,7 @@ router.get('/receipt/invoice/:invoiceId', asyncHandler(async (req, res) => {
     let y = letterhead(doc, school);
     y = heading(doc, 'Fee Receipt', y);
     doc.fontSize(10).fillColor('#555')
-      .text(`Receipt for Intimation No: SMS-${String(inv.id).padStart(5, '0')}`, 50, y)
+      .text(`Receipt for Intimation No: JSS-${String(inv.id).padStart(5, '0')}`, 50, y)
       .text(`Date: ${bsDate(new Date())}`, 50, y, { align: 'right' });
     doc.fillColor('black').fontSize(12);
 
@@ -199,11 +199,20 @@ router.get('/intimation/:invoiceId', asyncHandler(async (req, res) => {
   const invoiceId = intParam(req.params.invoiceId, 'invoiceId');
   const inv = await prisma.feeInvoice.findUnique({
     where: { id: invoiceId },
-    include: { items: true, payments: true, student: { include: { class: { select: { name: true } } } } },
+    include: { items: true, payments: true, student: { include: { class: { select: { name: true } }, parent: true } } },
   });
   if (!inv) throw new AppError(404, 'Invoice not found');
   const school = await getSchool();
   const period = await getBillingPeriod();
+
+  // Roll number = the student's position among classmates ordered alphabetically by name.
+  if (inv.student.classId != null) {
+    const mates = await prisma.student.findMany({ where: { classId: inv.student.classId }, select: { id: true }, orderBy: { name: 'asc' } });
+    const idx = mates.findIndex((m) => m.id === inv.student.id);
+    (inv.student as any)._roll = idx >= 0 ? String(idx + 1) : (inv.student.rollNo || '—');
+  } else {
+    (inv.student as any)._roll = inv.student.rollNo || '—';
+  }
 
   // A4 sheet laid out as 4 quarters — one filled (top-left), the rest blank, with
   // bold card borders and cut guides. Always prints at 1/4 size.
@@ -241,18 +250,20 @@ function panelHead(doc: PDFKit.PDFDocument, ox: number, oy: number, L: number, R
 /** Two-column student info block (Student/IEMIS left, Class/Fee For right). The right
  *  column is aligned just past the widest left cell, and the font shrinks only as needed
  *  so nothing overlaps or wraps (IEMIS IDs can be long). */
+// Each cell is [label, value, boldValue?]; boldValue renders the value in bold too.
+type InfoCell = [string, string, boolean?];
 function panelInfo(doc: PDFKit.PDFDocument, L: number, R: number, y: number, reg: string, bold: string,
-  left: [string, string][], right: [string, string][]) {
+  left: InfoCell[], right: InfoCell[]) {
   const avail = R - L, gap = 12;
-  const cellW = (label: string, value: string, size: number) => {
+  const cellW = (label: string, value: string, boldValue: boolean | undefined, size: number) => {
     doc.font(bold).fontSize(size); const w1 = doc.widthOfString(`${label}: `);
-    doc.font(reg).fontSize(size); return w1 + doc.widthOfString(value);
+    doc.font(boldValue ? bold : reg).fontSize(size); return w1 + doc.widthOfString(value);
   };
   const measure = (size: number) => {
     let maxL = 0, maxR = 0;
     for (let i = 0; i < left.length; i++) {
-      maxL = Math.max(maxL, cellW(left[i][0], left[i][1], size));
-      if (right[i]) maxR = Math.max(maxR, cellW(right[i][0], right[i][1], size));
+      maxL = Math.max(maxL, cellW(left[i][0], left[i][1], left[i][2], size));
+      if (right[i]) maxR = Math.max(maxR, cellW(right[i][0], right[i][1], right[i][2], size));
     }
     return { maxL, maxR };
   };
@@ -261,11 +272,25 @@ function panelInfo(doc: PDFKit.PDFDocument, L: number, R: number, y: number, reg
   const colX = L + m.maxL + gap;
   for (let i = 0; i < left.length; i++) {
     doc.fontSize(size);
-    doc.font(bold).fillColor('black').text(`${left[i][0]}: `, L, y, { continued: true }).font(reg).text(left[i][1], { lineBreak: false });
-    if (right[i]) doc.font(bold).text(`${right[i][0]}: `, colX, y, { continued: true }).font(reg).text(right[i][1], { lineBreak: false });
+    doc.font(bold).fillColor('black').text(`${left[i][0]}: `, L, y, { continued: true }).font(left[i][2] ? bold : reg).text(left[i][1], { lineBreak: false });
+    if (right[i]) doc.font(bold).text(`${right[i][0]}: `, colX, y, { continued: true }).font(right[i][2] ? bold : reg).text(right[i][1], { lineBreak: false });
     y += size + 5;
   }
   return y + 3;
+}
+
+/** Convert 1..3999 to a Roman numeral. */
+function toRoman(n: number): string {
+  if (!Number.isInteger(n) || n <= 0 || n >= 4000) return String(n);
+  const map: [number, string][] = [[1000,'M'],[900,'CM'],[500,'D'],[400,'CD'],[100,'C'],[90,'XC'],[50,'L'],[40,'XL'],[10,'X'],[9,'IX'],[5,'V'],[4,'IV'],[1,'I']];
+  let out = '';
+  for (const [v, s] of map) while (n >= v) { out += s; n -= v; }
+  return out;
+}
+/** Show a class name in Roman numerals when it's purely numeric (e.g. "10" -> "X"); else unchanged. */
+function romanClass(name: string | null | undefined): string {
+  const t = (name || '').trim();
+  return /^\d+$/.test(t) ? toRoman(Number(t)) : (t || '—');
 }
 
 /** Accountant signature, pulled up from the very bottom of the quadrant. */
@@ -282,16 +307,28 @@ function drawBillPanel(doc: PDFKit.PDFDocument, ox: number, oy: number, school: 
   const { reg, bold } = bodyFonts(doc);
 
   let y = panelHead(doc, ox, oy, L, R, school, reg);
-  doc.fillColor(BRAND).font(bold).fontSize(13).text('INTIMATION CARD', L, y, { width: R - L, align: 'center' });
-  doc.fillColor('black'); y += 19;
+  // Compact title inside a thick brand border box, centred in the card.
+  const titleSize = 11;
+  doc.font(bold).fontSize(titleSize);
+  const tW = doc.widthOfString('INTIMATION CARD');
+  const bpX = 12, bpY = 4, boxW = tW + bpX * 2, boxH = titleSize + bpY * 2;
+  const boxX = L + (R - L - boxW) / 2;
+  doc.lineWidth(2).strokeColor(BRAND).rect(boxX, y, boxW, boxH).stroke();
+  doc.fillColor(BRAND).text('INTIMATION CARD', boxX, y + bpY, { width: boxW, align: 'center' });
+  doc.lineWidth(1).fillColor('black'); y += boxH + 6;
+
   doc.font(reg).fontSize(7.5).fillColor('#555')
-    .text(`Bill No: SMS-${String(inv.id).padStart(5, '0')}`, L, y)
+    .text(`Bill No: JSS-${String(inv.id).padStart(5, '0')}`, L, y)
     .text(`Date: ${bsDate(inv.createdAt)}`, L, y, { width: R - L, align: 'right' });
   doc.fillColor('black'); y += 14;
 
+  const st = inv.student;
+  const father = st.parent?.name || '—';
+  const contact = st.parent?.phone || st.phone || st.emergencyContact || '—';
+  const roll = (st as any)._roll || st.rollNo || '—';
   y = panelInfo(doc, L, R, y, reg, bold,
-    [['Student', inv.student.name], ['IEMIS ID', inv.student.iemis || '—']],
-    [['Class', inv.student.class?.name || '—'], ['Fee For', upToLabel(period)]]);
+    [['Student', st.name, true], ['Roll No', roll], ["Father's Name", father], ['Contact', contact]],
+    [['Class', romanClass(st.class?.name)], ['IEMIS ID', st.iemis || '—'], ['Fee For', upToLabel(period), true]]);
 
   const gross = inv.items.reduce((a: number, i: any) => a + i.amount, 0);
   const total = gross + inv.fine - inv.discount;
@@ -307,7 +344,7 @@ function drawBillPanel(doc: PDFKit.PDFDocument, ox: number, oy: number, school: 
   gridRow('Balance Due', (total - settled).toLocaleString('en-IN'), { bold: true, color: total - settled > 0 ? 'red' : 'green' });
 
   doc.font(reg).fontSize(7).fillColor('#777')
-    .text('This is a fee intimation, not a receipt. Please clear the balance by the due date.', L, y + 5, { width: R - L });
+    .text('This is a fee intimation, not a receipt. Please clear the balance by the 10th of the month.', L, y + 5, { width: R - L });
   panelSignature(doc, ox, oy, R, reg);
 }
 
@@ -386,10 +423,23 @@ router.get('/bills', asyncHandler(async (req, res) => {
   const period = await getBillingPeriod();
   const invoices = await prisma.feeInvoice.findMany({
     where: { id: { in: ids } },
-    include: { items: true, payments: true, student: { include: { class: { select: { name: true } } } } },
+    include: { items: true, payments: true, student: { include: { class: { select: { name: true } }, parent: true } } },
     orderBy: { student: { name: 'asc' } },
   });
   if (!invoices.length) throw new AppError(404, 'No bills found');
+
+  // Class-wise alphabetical roll numbers, batched (one query for all involved classes).
+  const classIds = [...new Set(invoices.map((i) => i.student.classId).filter((c): c is number => c != null))];
+  if (classIds.length) {
+    const mates = await prisma.student.findMany({ where: { classId: { in: classIds } }, select: { id: true, classId: true }, orderBy: { name: 'asc' } });
+    const byClass = new Map<number, number[]>();
+    for (const m of mates) { const arr = byClass.get(m.classId!) || []; arr.push(m.id); byClass.set(m.classId!, arr); }
+    for (const inv of invoices) {
+      const arr = inv.student.classId != null ? byClass.get(inv.student.classId) : undefined;
+      const idx = arr ? arr.indexOf(inv.student.id) : -1;
+      (inv.student as any)._roll = idx >= 0 ? String(idx + 1) : (inv.student.rollNo || '—');
+    }
+  }
 
   streamPdf(res, `bills-4up-${invoices.length}.pdf`, (doc) => {
     const quad = [[0, 0], [QW, 0], [0, QH], [QW, QH]];
