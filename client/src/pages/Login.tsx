@@ -8,8 +8,8 @@ import { apiError } from '@/lib/api';
 export default function Login() {
   const { login } = useAuth();
   const navigate = useNavigate();
-  const [email, setEmail] = useState('admin@school.com');
-  const [password, setPassword] = useState('admin123');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -48,11 +48,6 @@ export default function Login() {
             {loading ? 'Signing in…' : 'Sign In'}
           </Button>
         </form>
-
-        <div className="mt-6 space-y-1 rounded-lg bg-slate-50 px-3 py-3 text-center text-xs text-slate-500">
-          <div>Admin — <b>admin@school.com</b> / <b>admin123</b></div>
-          <div>Teacher — <b>anjali@school.com</b> / <b>teacher123</b></div>
-        </div>
       </div>
     </div>
   );
