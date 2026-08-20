@@ -132,6 +132,7 @@ router.get('/receipt/invoice/:invoiceId', asyncHandler(async (req, res) => {
   if (inv.payments.length === 0) throw new AppError(400, 'No payments recorded yet');
   const school = await getSchool();
   const period = await getBillingPeriod();
+  const snInv = (await buildSerialMap()).get(inv.student.id);
   const gross = inv.items.reduce((a, i) => a + i.amount, 0);
   const total = gross + inv.fine - inv.discount;
   const paid = inv.payments.reduce((a, p) => a + p.amount, 0);
@@ -141,7 +142,7 @@ router.get('/receipt/invoice/:invoiceId', asyncHandler(async (req, res) => {
     let y = letterhead(doc, school);
     y = heading(doc, 'Fee Receipt', y);
     doc.fontSize(10).fillColor('#555')
-      .text(`Receipt for Intimation No: JSS-${String(inv.id).padStart(5, '0')}`, 50, y)
+      .text(`Receipt No: ${serialNo(snInv, period.year)}`, 50, y)
       .text(`Date: ${bsDate(new Date())}`, 50, y, { align: 'right' });
     doc.fillColor('black').fontSize(12);
 
@@ -187,6 +188,7 @@ router.get('/receipt/:paymentId', asyncHandler(async (req, res) => {
   const period = await getBillingPeriod();
   const inv = payment.invoice;
   await attachRoll(inv.student); // class-wise alphabetical roll
+  (inv.student as any)._sn = (await buildSerialMap()).get(inv.student.id); // school-wide serial (9 -> P.G.)
 
   // A4 sheet, one quarter filled (top-left) with the receipt card, rest blank, bordered + cut guides.
   streamPdf(res, `${payment.receiptNo}.pdf`, (doc) => {
@@ -207,6 +209,7 @@ router.get('/intimation/:invoiceId', asyncHandler(async (req, res) => {
   const period = await getBillingPeriod();
 
   await attachRoll(inv.student); // class-wise alphabetical roll
+  (inv.student as any)._sn = (await buildSerialMap()).get(inv.student.id); // school-wide serial (9 -> P.G.)
 
   // A4 sheet laid out as 4 quarters — one filled (top-left), the rest blank, with
   // bold card borders and cut guides. Always prints at 1/4 size.
@@ -312,6 +315,20 @@ function romanClass(name: string | null | undefined): string {
   return /^\d+$/.test(t) ? toRoman(Number(t)) : (t || '—');
 }
 
+/** Map studentId -> serial number (S.N.), assigned 1..N by class order DESCENDING (highest class
+ *  first, e.g. 9 -> P.G.) then name A-Z. One query; reused for a whole sheet. */
+async function buildSerialMap(): Promise<Map<number, number>> {
+  const all = await prisma.student.findMany({ select: { id: true, name: true, class: { select: { order: true } } } });
+  all.sort((a, b) => (b.class?.order ?? -1) - (a.class?.order ?? -1) || a.name.localeCompare(b.name));
+  const m = new Map<number, number>();
+  all.forEach((s, i) => m.set(s.id, i + 1));
+  return m;
+}
+/** Format a bill/receipt number as "JSS-<SN>/<billing year>", e.g. JSS-01/2083 (SN min 2 digits). */
+function serialNo(sn: number | undefined, year: number): string {
+  return `JSS-${String(sn || 0).padStart(2, '0')}/${year}`;
+}
+
 /** Accountant signature, pulled up from the very bottom of the quadrant. */
 function panelSignature(doc: PDFKit.PDFDocument, ox: number, oy: number, R: number, reg: string) {
   const sy = oy + QH - 96;
@@ -329,7 +346,7 @@ function drawBillPanel(doc: PDFKit.PDFDocument, ox: number, oy: number, school: 
   y = titleBox(doc, L, R, y, bold, 'INTIMATION CARD');
 
   doc.font(reg).fontSize(7.5).fillColor('#555')
-    .text(`Bill No: JSS-${String(inv.id).padStart(5, '0')}`, L, y)
+    .text(`Bill No: ${serialNo((inv.student as any)._sn, period.year)}`, L, y)
     .text(`Date: ${bsDate(inv.createdAt)}`, L, y, { width: R - L, align: 'right' });
   doc.fillColor('black'); y += 14;
 
@@ -404,7 +421,7 @@ function drawReceiptPanel(doc: PDFKit.PDFDocument, ox: number, oy: number, schoo
   let y = panelHead(doc, ox, oy, L, R, school, reg);
   y = titleBox(doc, L, R, y, bold, 'FEE RECEIPT');
   doc.font(reg).fontSize(7.5).fillColor('#555')
-    .text(`Receipt No: ${payment.receiptNo}`, L, y, { lineBreak: false })
+    .text(`Receipt No: ${serialNo((inv.student as any)._sn, period.year)}`, L, y, { lineBreak: false })
     .text(`Date: ${bsDate(payment.paidAt)}`, L, y, { width: R - L, align: 'right', lineBreak: false });
   doc.fillColor('black'); y += 14;
 
@@ -469,6 +486,8 @@ router.get('/bills', asyncHandler(async (req, res) => {
       (inv.student as any)._roll = idx >= 0 ? String(idx + 1) : (inv.student.rollNo || '—');
     }
   }
+  const serials = await buildSerialMap();
+  for (const inv of invoices) (inv.student as any)._sn = serials.get(inv.student.id);
 
   streamPdf(res, `bills-4up-${invoices.length}.pdf`, (doc) => {
     const quad = [[0, 0], [QW, 0], [0, QH], [QW, QH]];
