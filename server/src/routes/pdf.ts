@@ -2,7 +2,7 @@ import { Router } from 'express';
 import prisma from '../prisma.js';
 import { authRequired } from '../middleware/auth.js';
 import { asyncHandler, AppError, intParam } from '../lib/http.js';
-import { streamPdf, letterhead, heading, signatureBlock, schoolNameFont, bodyFonts, BRAND, LOGO_PATH, type SchoolInfo } from '../lib/pdf.js';
+import { streamPdf, letterhead, heading, signatureBlock, schoolNameFont, bodyFonts, BRAND, LOGO_PATH, QR_PATH, type SchoolInfo } from '../lib/pdf.js';
 import { bsDate } from '../lib/nepaliDate.js';
 import { computeAudit, type Line } from '../lib/audit.js';
 import { getBillingPeriod, ensureAllLedgers, BS_MONTHS, type BSPeriod } from '../lib/ledger.js';
@@ -354,8 +354,23 @@ function drawBillPanel(doc: PDFKit.PDFDocument, ox: number, oy: number, school: 
   if (settled) gridRow('Paid / Adjusted', settled.toLocaleString('en-IN'), { bold: true, color: 'green' });
   gridRow('Balance Due', (total - settled).toLocaleString('en-IN'), { bold: true, color: total - settled > 0 ? 'red' : 'green' });
 
-  doc.font(reg).fontSize(7).fillColor('#777')
-    .text('This is a fee intimation, not a receipt. Please clear the balance by the 10th of the month.', L, y + 5, { width: R - L });
+  const disclaimer = 'This is a fee intimation, not a receipt. Please clear the balance by the 10th of the month.';
+  doc.font(reg).fontSize(7).fillColor('#777').text(disclaimer, L, y + 5, { width: R - L });
+  const discH = doc.heightOfString(disclaimer, { width: R - L });
+
+  // Payment QR in the bottom-left blank area: bordered, with a bold one-line caption beneath.
+  const qpad = 4, capH = 11, gapCap = 3;
+  const top = y + 5 + discH + 6;                 // just below the disclaimer
+  const bottom = oy + QH - CARD_MARGIN - 5;      // just inside the card border
+  const qrSize = Math.min(96, bottom - top - gapCap - capH);
+  if (qrSize >= 38) {
+    const qx = L, qy = top;
+    doc.lineWidth(1.2).strokeColor(BRAND).rect(qx - qpad, qy - qpad, qrSize + qpad * 2, qrSize + qpad * 2).stroke();
+    try { doc.image(QR_PATH, qx, qy, { fit: [qrSize, qrSize] }); } catch { /* qr optional */ }
+    doc.lineWidth(1).fillColor('black').font(bold).fontSize(8)
+      .text('Scan this QR to pay online', qx - qpad, qy + qrSize + qpad + gapCap, { width: 160, lineBreak: false });
+  }
+
   panelSignature(doc, ox, oy, R, reg);
 }
 
