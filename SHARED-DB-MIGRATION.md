@@ -1,5 +1,21 @@
 # Shared Database Migration — Roadmap
 
+## STATUS: BUILD SUCCEEDED — awaiting user test + publish (2026-08-19)
+CI build v1.1.0 is green. Draft release created with `Janaki-School-Setup-1.1.0.exe` (87 MB) +
+`.blockmap` + `latest.yml`. Releases page:
+https://github.com/mission-yadav/School-management-System/releases
+LAST STEPS (user): download the draft .exe -> install on a Windows PC -> confirm it shows real
+data (138 students) from Neon -> click "Publish release" -> existing devices auto-update to 1.1.0.
+Also: merge PR #1 (feat/shared-neon-db -> main) so main matches the released tag.
+
+CI gotchas solved along the way (keep in mind for future builds):
+- Prisma client must be generated BEFORE tsc (fixed ordering in workflow + build scripts).
+- Don't use electron-builder's GitHub publisher here (it hung); build with --publish never and
+  upload via gh release. Job has timeout-minutes: 30.
+- npm links the root pkg (name "sms") into node_modules/sms -> points at repo root -> release/
+  win-unpacked -> electron-builder packed its own output recursively (30-min 7-Zip hang). Workflow
+  removes self-links + stale release/ before building; files excludes node_modules/sms + release.
+
 ## PROGRESS (branch: `feat/shared-neon-db`)
 - ✅ **Phase 1 done** — schema.prisma flipped to `postgresql` + `directUrl`; client regenerated; validates.
 - ✅ **Phase 2 done** — removed the SQLite PRAGMA `ensureSchema()` hack from `server/src/index.ts`;

@@ -181,11 +181,90 @@ export async function ensureLedger(studentId: number, period?: BSPeriod): Promis
   return inv.id;
 }
 
-/** Ensure ledgers exist for every active student (used before listing). */
+/**
+ * Ensure ledgers exist and are accrued for every active student — BULK.
+ * Mirrors ensureLedger's logic exactly but in a handful of queries (bulk load +
+ * createMany/deleteMany) instead of N+1 per-student round-trips, so listing fees
+ * over a remote (Neon) database stays fast. Idempotent: a second run is a no-op.
+ */
 export async function ensureAllLedgers(): Promise<void> {
-  const period = await getBillingPeriod();
-  const students = await prisma.student.findMany({ where: { status: 'ACTIVE' }, select: { id: true } });
-  for (const s of students) await ensureLedger(s.id, period);
+  const { year, month } = await getBillingPeriod();
+  const students = await prisma.student.findMany({
+    where: { status: 'ACTIVE' },
+    include: { class: { include: { feeStructure: true } } },
+  });
+  if (!students.length) return;
+  const ids = students.map((s) => s.id);
+
+  // Create any missing ledger invoices in one batch, then (re)load all ledgers with items.
+  const existing = await prisma.feeInvoice.findMany({ where: { isLedger: true, studentId: { in: ids } }, select: { studentId: true } });
+  const have = new Set(existing.map((l) => l.studentId));
+  const missing = students.filter((s) => !have.has(s.id));
+  if (missing.length) {
+    await prisma.feeInvoice.createMany({
+      data: missing.map((s) => ({ studentId: s.id, title: `Fee Ledger ${year}`, sessionLabel: `${year}`, isLedger: true })),
+    });
+  }
+  const ledgers = await prisma.feeInvoice.findMany({ where: { isLedger: true, studentId: { in: ids } }, include: { items: true } });
+  const byStudent = new Map(ledgers.map((l) => [l.studentId, l]));
+
+  const itemsToCreate: any[] = [];
+  const legacyComputerInvIds: number[] = [];
+  const annualExemptInvIds: number[] = [];
+
+  for (const student of students) {
+    const inv = byStudent.get(student.id);
+    if (!inv) continue;
+    const s = student.class?.feeStructure;
+    const items = inv.items;
+    const monthly = student.feeFree ? 0 : (s?.monthlyTuition ?? 0);
+
+    const prevDuesMonths = new Set(items.filter((i) => i.description === 'Previous Dues' && i.bsMonth != null).map((i) => `${i.bsYear}-${i.bsMonth}`));
+    const tuitionMonths = new Set(items.filter(isTuitionLine).map((i) => `${i.bsYear}-${i.bsMonth}`));
+    for (let m = 1; m <= month; m++) {
+      const key = `${year}-${m}`;
+      if (!tuitionMonths.has(key) && !prevDuesMonths.has(key))
+        itemsToCreate.push({ invoiceId: inv.id, description: monthDesc(m, year, 'Tuition Fee'), amount: monthly, bsYear: year, bsMonth: m });
+    }
+
+    if (items.some((i) => i.bsMonth == null && i.description === 'Computer Fee')) legacyComputerInvIds.push(inv.id);
+    const computer = s?.computerFee ?? 0;
+    if (computer > 0) {
+      const computerMonths = new Set(items.filter(isComputerLine).map((i) => `${i.bsYear}-${i.bsMonth}`));
+      for (let m = 1; m <= month; m++) {
+        const key = `${year}-${m}`;
+        if (!computerMonths.has(key) && !prevDuesMonths.has(key))
+          itemsToCreate.push({ invoiceId: inv.id, description: monthDesc(m, year, 'Computer Fee'), amount: computer, bsYear: year, bsMonth: m });
+      }
+    }
+
+    const haveDesc = new Set(items.filter((i) => !i.bsMonth).map((i) => i.description));
+    const headings = HEADINGS.map((h) => [h.label, (s as any)?.[h.key] ?? 0] as [string, number]);
+    if (student.usesTransport) headings.push(['Transportation Charge', student.transportFee ?? s?.transportFee ?? 0]);
+    for (const [desc, amt] of headings) {
+      if (amt > 0 && !haveDesc.has(desc)) itemsToCreate.push({ invoiceId: inv.id, description: desc, amount: amt, bsYear: null, bsMonth: null });
+    }
+
+    const annualItems = items.filter((i) => i.description === 'Annual Charge');
+    const annualAmt = s?.annualCharge ?? 0;
+    if (student.annualExempt) {
+      if (annualItems.length) annualExemptInvIds.push(inv.id);
+    } else if (annualAmt > 0) {
+      const existingYears = items.filter((i) => i.bsMonth).map((i) => i.bsYear!);
+      const startYear = existingYears.length ? Math.min(...existingYears) : year;
+      const haveAnnual = new Set(annualItems.map((i) => i.bsYear));
+      for (let y = startYear + 1; y <= year; y++) {
+        if (!haveAnnual.has(y)) itemsToCreate.push({ invoiceId: inv.id, description: 'Annual Charge', amount: annualAmt, bsYear: y, bsMonth: null });
+      }
+    }
+  }
+
+  if (legacyComputerInvIds.length)
+    await prisma.feeItem.deleteMany({ where: { invoiceId: { in: legacyComputerInvIds }, bsMonth: null, description: 'Computer Fee' } });
+  if (annualExemptInvIds.length)
+    await prisma.feeItem.deleteMany({ where: { invoiceId: { in: annualExemptInvIds }, description: 'Annual Charge' } });
+  if (itemsToCreate.length)
+    await prisma.feeItem.createMany({ data: itemsToCreate });
 }
 
 /**
