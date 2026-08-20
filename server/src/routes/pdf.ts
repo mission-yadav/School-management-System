@@ -362,7 +362,7 @@ function drawBillPanel(doc: PDFKit.PDFDocument, ox: number, oy: number, school: 
   const qpad = 4, capH = 11, gapCap = 3;
   const top = y + 5 + discH + 6;                 // just below the disclaimer
   const bottom = oy + QH - CARD_MARGIN - 5;      // just inside the card border
-  const qrSize = Math.min(96, bottom - top - gapCap - capH);
+  const qrSize = Math.min(52, bottom - top - gapCap - capH);
   if (qrSize >= 38) {
     const qx = L, qy = top;
     doc.lineWidth(1.2).strokeColor(BRAND).rect(qx - qpad, qy - qpad, qrSize + qpad * 2, qrSize + qpad * 2).stroke();
