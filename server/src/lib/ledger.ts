@@ -132,6 +132,24 @@ function latestTuitionAmount(items: { description: string; bsYear?: number | nul
   return latest.amount;
 }
 
+/** Ids of duplicate month lines (same bsYear+bsMonth+description) to delete — keep the highest
+ *  amount per group. Self-heals duplicates that concurrent accruals may have created. */
+function duplicateMonthLineIds(items: { id: number; bsYear?: number | null; bsMonth?: number | null; description: string; amount: number }[]): number[] {
+  const groups = new Map<string, typeof items>();
+  for (const i of items) {
+    if (i.bsMonth == null) continue;
+    const k = `${i.bsYear}-${i.bsMonth}-${i.description}`;
+    const g = groups.get(k); if (g) g.push(i); else groups.set(k, [i]);
+  }
+  const del: number[] = [];
+  for (const arr of groups.values()) {
+    if (arr.length < 2) continue;
+    arr.sort((a, b) => b.amount - a.amount || a.id - b.id); // keep highest amount (then lowest id)
+    for (const x of arr.slice(1)) del.push(x.id);
+  }
+  return del;
+}
+
 /**
  * Ensure a student has a running fee ledger (one FeeInvoice, isLedger=true) and that it
  * has a monthly-tuition line for every BS month elapsed this session + the standard headings.
@@ -151,6 +169,13 @@ export async function ensureLedger(studentId: number, period?: BSPeriod): Promis
       data: { studentId, title: `Fee Ledger ${year}`, sessionLabel: `${year}`, isLedger: true },
       include: { items: true },
     });
+  }
+
+  // Self-heal any duplicate month lines from past concurrent accruals before recomputing.
+  const dupIds = duplicateMonthLineIds(inv.items);
+  if (dupIds.length) {
+    await prisma.feeItem.deleteMany({ where: { id: { in: dupIds } } });
+    inv.items = inv.items.filter((i) => !dupIds.includes(i.id));
   }
 
   const s = student.class?.feeStructure;
@@ -241,6 +266,14 @@ export async function ensureAllLedgers(): Promise<void> {
   }
   const ledgers = await prisma.feeInvoice.findMany({ where: { isLedger: true, studentId: { in: ids } }, include: { items: true } });
   const byStudent = new Map(ledgers.map((l) => [l.studentId, l]));
+
+  // Self-heal any duplicate month lines from past concurrent accruals (one batched delete).
+  const allDupIds: number[] = [];
+  for (const l of ledgers) {
+    const d = duplicateMonthLineIds(l.items);
+    if (d.length) { allDupIds.push(...d); l.items = l.items.filter((i) => !d.includes(i.id)); }
+  }
+  if (allDupIds.length) await prisma.feeItem.deleteMany({ where: { id: { in: allDupIds } } });
 
   const itemsToCreate: any[] = [];
   const legacyComputerInvIds: number[] = [];
