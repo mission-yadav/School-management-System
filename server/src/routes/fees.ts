@@ -2,7 +2,7 @@ import { Router } from 'express';
 import prisma from '../prisma.js';
 import { authRequired, requireRole } from '../middleware/auth.js';
 import { asyncHandler, AppError, intParam } from '../lib/http.js';
-import { ensureLedger, ensureAllLedgers, syncClassLedgers, currentBS, getBillingPeriod, setBillingPeriod, advanceBillingPeriod, revertBillingPeriod, canRevertBilling, nextPeriod, previousPeriod, BS_MONTHS } from '../lib/ledger.js';
+import { ensureLedger, ensureAllLedgers, syncClassLedgers, currentBS, getBillingPeriod, setBillingPeriod, advanceBillingPeriod, revertBillingPeriod, canRevertBilling, nextPeriod, previousPeriod, BS_MONTHS, buildSerialMap, serialNo } from '../lib/ledger.js';
 
 const router = Router();
 router.use(authRequired);
@@ -55,7 +55,7 @@ router.get('/', requireRole('ADMIN'), asyncHandler(async (req, res) => {
     const t = invoiceTotals(inv);
     // per-month tuition rate (latest real month) vs the accumulated total across months
     const monthItems = inv.items
-      .filter((i) => i.bsMonth && i.description !== 'Previous Dues')
+      .filter((i) => i.bsMonth && i.description.endsWith('Tuition Fee'))
       .sort((a, b) => (a.bsYear! - b.bsYear!) || (a.bsMonth! - b.bsMonth!));
     const components = componentsOf(inv.items);
     return {
@@ -105,7 +105,11 @@ function componentsOf(items: { description: string; amount: number; bsMonth?: nu
   for (const f of FEE_ORDER) out[f.key] = 0;
   for (const it of items) {
     if (it.description === 'Previous Dues') continue; // carried forward, not monthly tuition
-    if (it.bsMonth) { out.monthlyTuition += it.amount; continue; }
+    if (it.bsMonth) { // dated monthly lines: Computer Fee has its own column, everything else is tuition
+      if (it.description.endsWith('Computer Fee')) out.computerFee += it.amount;
+      else out.monthlyTuition += it.amount;
+      continue;
+    }
     const k = LABEL_TO_KEY[it.description]; if (k) out[k] = (out[k] || 0) + it.amount;
   }
   return out;
@@ -222,6 +226,7 @@ router.get('/ledger/:studentId', requireRole('ADMIN'), asyncHandler(async (req, 
   if (!student || !inv) throw new AppError(404, 'Not found');
   const t = invoiceTotals(inv);
   const { year, month } = await getBillingPeriod();
+  const sn = (await buildSerialMap()).get(studentId); // display bill/receipt no as JSS-<SN>/<year>
 
   const monthly = inv.items.filter((i) => i.bsMonth)
     .sort((a, b) => (a.bsYear! - b.bsYear!) || (a.bsMonth! - b.bsMonth!))
@@ -244,7 +249,7 @@ router.get('/ledger/:studentId', requireRole('ADMIN'), asyncHandler(async (req, 
     discount: inv.discount, fine: inv.fine, previousPaid: opening?.amount || 0,
     totals: { billed: t.total, paid: t.paid, concession: t.concession, due: t.due },
     status: inv.status, dueDate: inv.dueDate,
-    payments: realPayments.map((p) => ({ id: p.id, receiptNo: p.receiptNo, amount: p.amount, less: p.less, method: p.method, paidAt: p.paidAt })),
+    payments: realPayments.map((p) => ({ id: p.id, receiptNo: serialNo(sn, year), amount: p.amount, less: p.less, method: p.method, paidAt: p.paidAt })),
   });
 }));
 
@@ -333,7 +338,9 @@ router.get('/:id', requireRole('ADMIN'), asyncHandler(async (req, res) => {
     include: { items: { include: { category: true } }, payments: { orderBy: { paidAt: 'desc' } }, student: true },
   });
   if (!inv) throw new AppError(404, 'Invoice not found');
-  res.json({ ...inv, ...invoiceTotals(inv) });
+  const { year } = await getBillingPeriod();
+  const rno = serialNo((await buildSerialMap()).get(inv.studentId), year);
+  res.json({ ...inv, payments: inv.payments.map((p) => ({ ...p, receiptNo: rno })), ...invoiceTotals(inv) });
 }));
 
 /** POST /api/fees (ADMIN) — create invoice with line items */
@@ -372,7 +379,23 @@ router.post('/:id/pay', requireRole('ADMIN'), asyncHandler(async (req, res) => {
     }),
     prisma.feeInvoice.update({ where: { id }, data: { status: newStatus } }),
   ]);
-  res.json({ ok: true, receiptNo, paymentId: payment.id, status: newStatus });
+  const { year } = await getBillingPeriod();
+  const displayNo = serialNo((await buildSerialMap()).get(inv.studentId), year);
+  res.json({ ok: true, receiptNo: displayNo, paymentId: payment.id, status: newStatus });
+}));
+
+/** DELETE /api/fees/payment/:paymentId (ADMIN) — revert one collected payment (paid correction). */
+router.delete('/payment/:paymentId', requireRole('ADMIN'), asyncHandler(async (req, res) => {
+  const pid = intParam(req.params.paymentId, 'paymentId');
+  const payment = await prisma.payment.findUnique({ where: { id: pid } });
+  if (!payment) throw new AppError(404, 'Payment not found');
+  await prisma.payment.delete({ where: { id: pid } });
+  const inv = await prisma.feeInvoice.findUnique({ where: { id: payment.invoiceId }, include: { items: true, payments: true } });
+  if (inv) {
+    const { total, settled } = invoiceTotals(inv);
+    await prisma.feeInvoice.update({ where: { id: inv.id }, data: { status: statusFor(total, settled) } });
+  }
+  res.json({ ok: true, reverted: { amount: payment.amount, less: payment.less } });
 }));
 
 /** PUT /api/fees/:id (ADMIN) — edit title/due/discount(Less)/fine and (optionally) all line items */

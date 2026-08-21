@@ -9,6 +9,20 @@ export const BS_MONTHS = ['Baisakh', 'Jestha', 'Asar', 'Shrawan', 'Bhadra', 'Ash
 
 export type BSPeriod = { year: number; month: number };
 
+/** Map studentId -> serial number (S.N.), assigned 1..N by class order DESCENDING
+ *  (highest class first, e.g. 9 -> P.G.) then name A-Z. One query; reused for a whole request. */
+export async function buildSerialMap(): Promise<Map<number, number>> {
+  const all = await prisma.student.findMany({ select: { id: true, name: true, class: { select: { order: true } } } });
+  all.sort((a, b) => (b.class?.order ?? -1) - (a.class?.order ?? -1) || a.name.localeCompare(b.name));
+  const m = new Map<number, number>();
+  all.forEach((s, i) => m.set(s.id, i + 1));
+  return m;
+}
+/** Format a bill/receipt number as "JSS-<SN>/<billing year>", e.g. JSS-01/2083 (SN min 2 digits). */
+export function serialNo(sn: number | undefined, year: number): string {
+  return `JSS-${String(sn || 0).padStart(2, '0')}/${year}`;
+}
+
 /** Real-world current Bikram Sambat year and month (1-indexed), from today's date. */
 export function currentBS(): BSPeriod {
   const bs = new NepaliDate(new Date()).getBS();
@@ -90,13 +104,51 @@ export async function revertBillingPeriod(): Promise<BSPeriod> {
   return prev;
 }
 
-// One-time headings added when the ledger begins. Annual Charge is NOT here — it
-// recurs once a year (see the annual-charge block in ensureLedger).
+// One-time headings added when the ledger begins. Annual Charge (yearly) and Computer Fee
+// (monthly) are NOT here — they recur; see ensureLedger.
 const HEADINGS: { key: string; label: string }[] = [
-  { key: 'computerFee', label: 'Computer Fee' },
   { key: 'examFee', label: 'Exam Fee' },
   { key: 'miscCharge', label: 'Miscellaneous Charges' },
 ];
+
+// A dated monthly line reads "Bhadra 2083 – Tuition Fee". Tuition and Computer Fee both recur
+// per month; classify dated (bsMonth) lines by their trailing label so they never mix.
+const monthDesc = (m: number, y: number, suffix: string) => `${BS_MONTHS[m - 1]} ${y} – ${suffix}`;
+export const isTuitionLine = (i: { description: string; bsMonth?: number | null }) => i.bsMonth != null && i.description.endsWith('Tuition Fee');
+export const isComputerLine = (i: { description: string; bsMonth?: number | null }) => i.bsMonth != null && i.description.endsWith('Computer Fee');
+
+/**
+ * The student's current per-month tuition rate = the amount of their most recent tuition line.
+ * New months inherit this, so an individually-set amount carries forward every month until it's
+ * changed again — the month advance no longer snaps it back to the class's common fee.
+ * Returns undefined when there are no tuition lines yet (brand-new ledger -> use class default).
+ */
+function latestTuitionAmount(items: { description: string; bsYear?: number | null; bsMonth?: number | null; amount: number }[]): number | undefined {
+  const tuition = items.filter(isTuitionLine);
+  if (!tuition.length) return undefined;
+  const latest = tuition.reduce((a, b) =>
+    (b.bsYear! > a.bsYear!) || (b.bsYear! === a.bsYear! && b.bsMonth! > a.bsMonth!) ? b : a
+  );
+  return latest.amount;
+}
+
+/** Ids of duplicate month lines (same bsYear+bsMonth+description) to delete — keep the highest
+ *  amount per group. Self-heals duplicates that concurrent accruals may have created. */
+function duplicateMonthLineIds(items: { id: number; bsYear?: number | null; bsMonth?: number | null; description: string; amount: number }[]): number[] {
+  const groups = new Map<string, typeof items>();
+  for (const i of items) {
+    if (i.bsMonth == null) continue;
+    const k = `${i.bsYear}-${i.bsMonth}-${i.description}`;
+    const g = groups.get(k); if (g) g.push(i); else groups.set(k, [i]);
+  }
+  const del: number[] = [];
+  for (const arr of groups.values()) {
+    if (arr.length < 2) continue;
+    arr.sort((a, b) => b.amount - a.amount || a.id - b.id); // keep highest amount (then lowest id)
+    for (const x of arr.slice(1)) del.push(x.id);
+  }
+  return del;
+}
 
 /**
  * Ensure a student has a running fee ledger (one FeeInvoice, isLedger=true) and that it
@@ -119,14 +171,46 @@ export async function ensureLedger(studentId: number, period?: BSPeriod): Promis
     });
   }
 
+  // Self-heal any duplicate month lines from past concurrent accruals before recomputing.
+  const dupIds = duplicateMonthLineIds(inv.items);
+  if (dupIds.length) {
+    await prisma.feeItem.deleteMany({ where: { id: { in: dupIds } } });
+    inv.items = inv.items.filter((i) => !dupIds.includes(i.id));
+  }
+
   const s = student.class?.feeStructure;
-  const monthly = student.feeFree ? 0 : (s?.monthlyTuition ?? 0);
+  // Carry the student's current individual monthly tuition forward (their latest tuition line),
+  // falling back to the class default only for a brand-new ledger.
+  const monthly = student.feeFree ? 0 : (latestTuitionAmount(inv.items) ?? s?.monthlyTuition ?? 0);
   const toCreate: any[] = [];
 
-  const haveMonths = new Set(inv.items.filter((i) => i.bsMonth).map((i) => `${i.bsYear}-${i.bsMonth}`));
+  // A consolidated "Previous Dues" line represents ALL charges up to and including the month it is
+  // stored at — so never re-accrue tuition/computer for any month at or before it. (Previously only
+  // the exact stored month was skipped, so earlier months were re-added on every save/accrual.)
+  const prevDuesItems = inv.items.filter((i) => i.description === 'Previous Dues' && i.bsMonth != null);
+  const prevDuesCutoff = prevDuesItems.reduce((mx, i) => Math.max(mx, i.bsYear! * 12 + i.bsMonth!), 0);
+  const coveredByPrevDues = (y: number, m: number) => prevDuesCutoff > 0 && y * 12 + m <= prevDuesCutoff;
+
+  const tuitionMonths = new Set(inv.items.filter(isTuitionLine).map((i) => `${i.bsYear}-${i.bsMonth}`));
   for (let m = 1; m <= month; m++) {
-    if (!haveMonths.has(`${year}-${m}`))
-      toCreate.push({ invoiceId: inv.id, description: `${BS_MONTHS[m - 1]} ${year} – Tuition Fee`, amount: monthly, bsYear: year, bsMonth: m });
+    const key = `${year}-${m}`;
+    if (!tuitionMonths.has(key) && !coveredByPrevDues(year, m))
+      toCreate.push({ invoiceId: inv.id, description: monthDesc(m, year, 'Tuition Fee'), amount: monthly, bsYear: year, bsMonth: m });
+  }
+
+  // Computer Fee recurs monthly, exactly like tuition — charged only when the class has one, one
+  // line per elapsed month, and never for a month already inside Previous Dues. Drop any legacy
+  // one-time "Computer Fee" heading so it isn't double-counted alongside the monthly lines.
+  if (inv.items.some((i) => i.bsMonth == null && i.description === 'Computer Fee'))
+    await prisma.feeItem.deleteMany({ where: { invoiceId: inv.id, bsMonth: null, description: 'Computer Fee' } });
+  const computer = s?.computerFee ?? 0;
+  if (computer > 0) {
+    const computerMonths = new Set(inv.items.filter(isComputerLine).map((i) => `${i.bsYear}-${i.bsMonth}`));
+    for (let m = 1; m <= month; m++) {
+      const key = `${year}-${m}`;
+      if (!computerMonths.has(key) && !coveredByPrevDues(year, m))
+        toCreate.push({ invoiceId: inv.id, description: monthDesc(m, year, 'Computer Fee'), amount: computer, bsYear: year, bsMonth: m });
+    }
   }
 
   const haveDesc = new Set(inv.items.filter((i) => !i.bsMonth).map((i) => i.description));
@@ -156,11 +240,102 @@ export async function ensureLedger(studentId: number, period?: BSPeriod): Promis
   return inv.id;
 }
 
-/** Ensure ledgers exist for every active student (used before listing). */
+/**
+ * Ensure ledgers exist and are accrued for every active student — BULK.
+ * Mirrors ensureLedger's logic exactly but in a handful of queries (bulk load +
+ * createMany/deleteMany) instead of N+1 per-student round-trips, so listing fees
+ * over a remote (Neon) database stays fast. Idempotent: a second run is a no-op.
+ */
 export async function ensureAllLedgers(): Promise<void> {
-  const period = await getBillingPeriod();
-  const students = await prisma.student.findMany({ where: { status: 'ACTIVE' }, select: { id: true } });
-  for (const s of students) await ensureLedger(s.id, period);
+  const { year, month } = await getBillingPeriod();
+  const students = await prisma.student.findMany({
+    where: { status: 'ACTIVE' },
+    include: { class: { include: { feeStructure: true } } },
+  });
+  if (!students.length) return;
+  const ids = students.map((s) => s.id);
+
+  // Create any missing ledger invoices in one batch, then (re)load all ledgers with items.
+  const existing = await prisma.feeInvoice.findMany({ where: { isLedger: true, studentId: { in: ids } }, select: { studentId: true } });
+  const have = new Set(existing.map((l) => l.studentId));
+  const missing = students.filter((s) => !have.has(s.id));
+  if (missing.length) {
+    await prisma.feeInvoice.createMany({
+      data: missing.map((s) => ({ studentId: s.id, title: `Fee Ledger ${year}`, sessionLabel: `${year}`, isLedger: true })),
+    });
+  }
+  const ledgers = await prisma.feeInvoice.findMany({ where: { isLedger: true, studentId: { in: ids } }, include: { items: true } });
+  const byStudent = new Map(ledgers.map((l) => [l.studentId, l]));
+
+  // Self-heal any duplicate month lines from past concurrent accruals (one batched delete).
+  const allDupIds: number[] = [];
+  for (const l of ledgers) {
+    const d = duplicateMonthLineIds(l.items);
+    if (d.length) { allDupIds.push(...d); l.items = l.items.filter((i) => !d.includes(i.id)); }
+  }
+  if (allDupIds.length) await prisma.feeItem.deleteMany({ where: { id: { in: allDupIds } } });
+
+  const itemsToCreate: any[] = [];
+  const legacyComputerInvIds: number[] = [];
+  const annualExemptInvIds: number[] = [];
+
+  for (const student of students) {
+    const inv = byStudent.get(student.id);
+    if (!inv) continue;
+    const s = student.class?.feeStructure;
+    const items = inv.items;
+    // Carry the student's current individual monthly tuition forward (see latestTuitionAmount).
+    const monthly = student.feeFree ? 0 : (latestTuitionAmount(items) ?? s?.monthlyTuition ?? 0);
+
+    // "Previous Dues" covers ALL months up to and including its stored month (not just that month).
+    const prevDuesItems = items.filter((i) => i.description === 'Previous Dues' && i.bsMonth != null);
+    const prevDuesCutoff = prevDuesItems.reduce((mx, i) => Math.max(mx, i.bsYear! * 12 + i.bsMonth!), 0);
+    const coveredByPrevDues = (y: number, mm: number) => prevDuesCutoff > 0 && y * 12 + mm <= prevDuesCutoff;
+    const tuitionMonths = new Set(items.filter(isTuitionLine).map((i) => `${i.bsYear}-${i.bsMonth}`));
+    for (let m = 1; m <= month; m++) {
+      const key = `${year}-${m}`;
+      if (!tuitionMonths.has(key) && !coveredByPrevDues(year, m))
+        itemsToCreate.push({ invoiceId: inv.id, description: monthDesc(m, year, 'Tuition Fee'), amount: monthly, bsYear: year, bsMonth: m });
+    }
+
+    if (items.some((i) => i.bsMonth == null && i.description === 'Computer Fee')) legacyComputerInvIds.push(inv.id);
+    const computer = s?.computerFee ?? 0;
+    if (computer > 0) {
+      const computerMonths = new Set(items.filter(isComputerLine).map((i) => `${i.bsYear}-${i.bsMonth}`));
+      for (let m = 1; m <= month; m++) {
+        const key = `${year}-${m}`;
+        if (!computerMonths.has(key) && !coveredByPrevDues(year, m))
+          itemsToCreate.push({ invoiceId: inv.id, description: monthDesc(m, year, 'Computer Fee'), amount: computer, bsYear: year, bsMonth: m });
+      }
+    }
+
+    const haveDesc = new Set(items.filter((i) => !i.bsMonth).map((i) => i.description));
+    const headings = HEADINGS.map((h) => [h.label, (s as any)?.[h.key] ?? 0] as [string, number]);
+    if (student.usesTransport) headings.push(['Transportation Charge', student.transportFee ?? s?.transportFee ?? 0]);
+    for (const [desc, amt] of headings) {
+      if (amt > 0 && !haveDesc.has(desc)) itemsToCreate.push({ invoiceId: inv.id, description: desc, amount: amt, bsYear: null, bsMonth: null });
+    }
+
+    const annualItems = items.filter((i) => i.description === 'Annual Charge');
+    const annualAmt = s?.annualCharge ?? 0;
+    if (student.annualExempt) {
+      if (annualItems.length) annualExemptInvIds.push(inv.id);
+    } else if (annualAmt > 0) {
+      const existingYears = items.filter((i) => i.bsMonth).map((i) => i.bsYear!);
+      const startYear = existingYears.length ? Math.min(...existingYears) : year;
+      const haveAnnual = new Set(annualItems.map((i) => i.bsYear));
+      for (let y = startYear + 1; y <= year; y++) {
+        if (!haveAnnual.has(y)) itemsToCreate.push({ invoiceId: inv.id, description: 'Annual Charge', amount: annualAmt, bsYear: y, bsMonth: null });
+      }
+    }
+  }
+
+  if (legacyComputerInvIds.length)
+    await prisma.feeItem.deleteMany({ where: { invoiceId: { in: legacyComputerInvIds }, bsMonth: null, description: 'Computer Fee' } });
+  if (annualExemptInvIds.length)
+    await prisma.feeItem.deleteMany({ where: { invoiceId: { in: annualExemptInvIds }, description: 'Annual Charge' } });
+  if (itemsToCreate.length)
+    await prisma.feeItem.createMany({ data: itemsToCreate });
 }
 
 /**
@@ -190,12 +365,17 @@ async function syncOneLedger(student: any, s: any, period: BSPeriod): Promise<vo
   const invId = await ensureLedger(student.id, period);
   if (!invId) return;
 
-  // month-wise tuition (leave any consolidated "Previous Dues" line alone)
+  // month-wise tuition (target only tuition lines — never "Previous Dues" or monthly Computer Fee)
   const monthly = student.feeFree ? 0 : (s?.monthlyTuition ?? 0);
   await prisma.feeItem.updateMany({
-    where: { invoiceId: invId, bsMonth: { not: null }, NOT: { description: 'Previous Dues' } },
+    where: { invoiceId: invId, bsMonth: { not: null }, description: { endsWith: 'Tuition Fee' } },
     data: { amount: monthly },
   });
+
+  // month-wise computer fee — re-price every month's line, or strip them all if set to 0
+  const computer = s?.computerFee ?? 0;
+  if (computer > 0) await prisma.feeItem.updateMany({ where: { invoiceId: invId, bsMonth: { not: null }, description: { endsWith: 'Computer Fee' } }, data: { amount: computer } });
+  else await prisma.feeItem.deleteMany({ where: { invoiceId: invId, bsMonth: { not: null }, description: { endsWith: 'Computer Fee' } } });
 
   // Annual charge recurs yearly — update every year's line to the new amount (or remove
   // all if set to 0 or the student is exempt). Never create here; ensureLedger adds them.
@@ -203,9 +383,8 @@ async function syncOneLedger(student: any, s: any, period: BSPeriod): Promise<vo
   if (annualAmt > 0 && !student.annualExempt) await prisma.feeItem.updateMany({ where: { invoiceId: invId, description: 'Annual Charge' }, data: { amount: annualAmt } });
   else await prisma.feeItem.deleteMany({ where: { invoiceId: invId, description: 'Annual Charge' } });
 
-  // canonical one-time headings -> desired amount (0 = remove)
+  // canonical one-time headings -> desired amount (0 = remove). Computer Fee is monthly now (above).
   const desired: [string, number][] = [
-    ['Computer Fee', s?.computerFee ?? 0],
     ['Exam Fee', s?.examFee ?? 0],
     ['Miscellaneous Charges', s?.miscCharge ?? 0],
     ['Transportation Charge', student.usesTransport ? (student.transportFee ?? s?.transportFee ?? 0) : 0],

@@ -1,6 +1,6 @@
 {
   "name": "janaki-school-desktop",
-  "version": "1.0.3",
+  "version": "1.1.4",
   "description": "Janaki Secondary School \u2014 fee & school management (desktop)",
   "author": "Janaki Secondary School",
   "main": "main.cjs",
@@ -21,7 +21,11 @@
     },
     "files": [
       "main.cjs",
-      "build/**"
+      "db.runtime.json",
+      "build/**",
+      "!**/node_modules/sms/**",
+      "!**/release/**",
+      "!**/*.exe"
     ],
     "extraResources": [
       {
@@ -43,6 +47,7 @@
           "**/*",
           "!seed-data/**",
           "!dev.db",
+          "!seed.db",
           "!*.db-journal",
           "!*.db-wal",
           "!import-data.ts",
