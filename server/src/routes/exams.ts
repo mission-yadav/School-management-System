@@ -2,24 +2,10 @@ import { Router } from 'express';
 import prisma from '../prisma.js';
 import { authRequired, requireRole } from '../middleware/auth.js';
 import { asyncHandler, AppError, intParam } from '../lib/http.js';
+import { buildClassSheets, buildSheet } from '../lib/exam.js';
 
 const router = Router();
 router.use(authRequired);
-
-/** Map a percentage to a grade + gpa using the configured GradeScale (fallback to defaults). */
-async function gradeFor(percent: number): Promise<{ grade: string; gpa: number }> {
-  const scales = await prisma.gradeScale.findMany({ orderBy: { minPercent: 'desc' } });
-  const found = scales.find((s) => percent >= s.minPercent && percent <= s.maxPercent);
-  if (found) return { grade: found.grade, gpa: found.gpa };
-  // fallback
-  if (percent >= 90) return { grade: 'A+', gpa: 10 };
-  if (percent >= 80) return { grade: 'A', gpa: 9 };
-  if (percent >= 70) return { grade: 'B+', gpa: 8 };
-  if (percent >= 60) return { grade: 'B', gpa: 7 };
-  if (percent >= 50) return { grade: 'C', gpa: 6 };
-  if (percent >= 35) return { grade: 'D', gpa: 5 };
-  return { grade: 'F', gpa: 0 };
-}
 
 /* ---- exams ---- */
 router.get('/', asyncHandler(async (_req, res) => {
@@ -113,52 +99,60 @@ router.get('/:id/ranklist', asyncHandler(async (req, res) => {
   const examId = intParam(req.params.id);
   const classId = Number(req.query.classId);
   if (!classId) throw new AppError(400, 'classId required');
-
-  const students = await prisma.student.findMany({ where: { classId, status: 'ACTIVE' } });
-  const results = await prisma.result.findMany({ where: { examId, student: { classId } } });
-
-  const rows = await Promise.all(students.map(async (s) => {
-    const rs = results.filter((r) => r.studentId === s.id);
-    const total = rs.reduce((a, r) => a + r.marks, 0);
-    const max = rs.reduce((a, r) => a + r.maxMarks, 0);
-    const percent = max ? (total / max) * 100 : 0;
-    const { grade, gpa } = await gradeFor(percent);
-    return { studentId: s.id, name: s.name, rollNo: s.rollNo, total, max, percent: Math.round(percent * 100) / 100, grade, gpa, subjects: rs.length };
-  }));
-  rows.sort((a, b) => b.percent - a.percent);
-  rows.forEach((r, i) => ((r as any).rank = i + 1));
+  const sheets = await buildClassSheets(examId, classId);
+  const rows = sheets
+    .filter((s) => s.subjects.length)
+    .map((s) => ({ studentId: s.student.id, name: s.student.name, rollNo: s.student.rollNo, total: s.total, max: s.max, percent: s.percent, grade: s.grade, gpa: s.gpa, subjects: s.subjects.length, rank: s.rank }))
+    .sort((a, b) => a.rank - b.rank);
   res.json(rows);
 }));
 
-/** GET /api/exams/:id/report-card?studentId= — per-subject breakdown + GPA */
+/** GET /api/exams/:id/report-card?studentId= — full computed sheet (subjects, GPA, grade, rank) */
 router.get('/:id/report-card', asyncHandler(async (req, res) => {
   const examId = intParam(req.params.id);
   const studentId = Number(req.query.studentId);
   if (!studentId) throw new AppError(400, 'studentId required');
+  const sheet = await buildSheet(examId, studentId);
+  if (!sheet) throw new AppError(404, 'Student not found');
+  res.json(sheet);
+}));
 
-  const student = await prisma.student.findUnique({ where: { id: studentId }, include: { class: { select: { name: true } } } });
-  if (!student) throw new AppError(404, 'Student not found');
-  const exam = await prisma.exam.findUnique({ where: { id: examId } });
-  const results = await prisma.result.findMany({ where: { examId, studentId }, include: { subject: { select: { name: true } } } });
-
-  const subjects = await Promise.all(results.map(async (r) => {
-    const percent = r.maxMarks ? (r.marks / r.maxMarks) * 100 : 0;
-    const g = await gradeFor(percent);
-    return { subject: r.subject.name, marks: r.marks, maxMarks: r.maxMarks, percent: Math.round(percent * 100) / 100, grade: g.grade, gpa: g.gpa };
+/* ---- per-student marks entry (all of a class's subjects for one student) ---- */
+/** GET /api/exams/:id/entry?classId=&studentId= — the class's subjects + this student's marks */
+router.get('/:id/entry', asyncHandler(async (req, res) => {
+  const examId = intParam(req.params.id);
+  const classId = Number(req.query.classId);
+  const studentId = Number(req.query.studentId);
+  if (!classId || !studentId) throw new AppError(400, 'classId and studentId required');
+  const subjects = await prisma.subject.findMany({ where: { classId }, orderBy: { name: 'asc' } });
+  const results = await prisma.result.findMany({ where: { examId, studentId } });
+  const bySub = new Map(results.map((r) => [r.subjectId, r]));
+  res.json(subjects.map((s) => {
+    const r = bySub.get(s.id);
+    return { subjectId: s.id, subjectName: s.name, marks: r?.marks ?? null, maxMarks: r?.maxMarks ?? 100 };
   }));
-  const total = subjects.reduce((a, s) => a + s.marks, 0);
-  const max = subjects.reduce((a, s) => a + s.maxMarks, 0);
-  const percent = max ? (total / max) * 100 : 0;
-  const overall = await gradeFor(percent);
-  const gpa = subjects.length ? subjects.reduce((a, s) => a + s.gpa, 0) / subjects.length : 0;
+}));
 
-  res.json({
-    student: { id: student.id, name: student.name, admissionNo: student.admissionNo, rollNo: student.rollNo, className: student.class?.name || null },
-    exam: exam ? { name: exam.name, term: exam.term } : null,
-    subjects, total, max, percent: Math.round(percent * 100) / 100,
-    grade: overall.grade, gpa: Math.round(gpa * 100) / 100,
-    result: percent >= 35 ? 'PASS' : 'FAIL',
+/** POST /api/exams/:id/entry — save one student's marks across subjects */
+router.post('/:id/entry', asyncHandler(async (req, res) => {
+  const examId = intParam(req.params.id);
+  const { studentId, records } = req.body || {};
+  if (!studentId || !Array.isArray(records)) throw new AppError(400, 'studentId and records[] required');
+  const sid = Number(studentId);
+  const ops = records.map((r: any) => {
+    const subjectId = Number(r.subjectId);
+    const maxMarks = Number(r.maxMarks || 100);
+    const empty = r.marks === '' || r.marks === null || r.marks === undefined;
+    return empty
+      ? prisma.result.deleteMany({ where: { examId, subjectId, studentId: sid } })
+      : prisma.result.upsert({
+          where: { examId_subjectId_studentId: { examId, subjectId, studentId: sid } },
+          update: { marks: Number(r.marks), maxMarks, enteredById: req.user!.id },
+          create: { examId, subjectId, studentId: sid, marks: Number(r.marks), maxMarks, enteredById: req.user!.id },
+        });
   });
+  await prisma.$transaction(ops);
+  res.json({ ok: true, saved: ops.length });
 }));
 
 export default router;

@@ -6,6 +6,7 @@ import { streamPdf, letterhead, heading, signatureBlock, schoolNameFont, bodyFon
 import { bsDate } from '../lib/nepaliDate.js';
 import { computeAudit, type Line } from '../lib/audit.js';
 import { getBillingPeriod, ensureAllLedgers, BS_MONTHS, buildSerialMap, serialNo, type BSPeriod } from '../lib/ledger.js';
+import { buildSheet, buildClassSheets, type Sheet } from '../lib/exam.js';
 
 /** "Up to Shrawan 2083" — the fee period the document covers (the billing month). */
 function upToLabel(period: BSPeriod) {
@@ -778,5 +779,114 @@ router.get('/report-card', asyncHandler(async (req, res) => {
     signatureBlock(doc);
   });
 }));
+
+/* ============================================================ EXAM SHEETS */
+/** Draw one student's marks-sheet OR grade-sheet inside a box (ox,oy,W,H).
+ *  Same card is used full-page (individual) and half-page (2-up class landscape). */
+function drawExamSheet(doc: PDFKit.PDFDocument, ox: number, oy: number, W: number, H: number, kind: 'marks' | 'grade', sheet: Sheet, school: SchoolInfo) {
+  const pad = 16;
+  const L = ox + pad, R = ox + W - pad, tw = R - L;
+  const { reg, bold } = bodyFonts(doc);
+
+  doc.save().lineWidth(2).strokeColor(BRAND).rect(ox + 8, oy + 8, W - 16, H - 16).stroke().restore(); // card border
+
+  let y = panelHead(doc, ox, oy, L, R, school, reg);
+  y = titleBox(doc, L, R, y, bold, kind === 'marks' ? 'MARKS SHEET' : 'GRADE SHEET');
+  doc.font(reg).fontSize(8).fillColor('#555')
+    .text(`${sheet.exam?.name ?? 'Exam'}${sheet.exam?.term ? '  ·  ' + sheet.exam.term : ''}`, L, y, { width: tw, align: 'center', lineBreak: false });
+  doc.fillColor('black'); y += 15;
+
+  y = panelInfo(doc, L, R, y, reg, bold,
+    [['Student', sheet.student.name, true], ['Roll No', String(sheet.student.rollNo ?? '—')]],
+    [['Class', romanClass(sheet.student.className)], ['Symbol No', sheet.student.iemis || sheet.student.admissionNo]]);
+
+  // ---- table ----
+  const cols = kind === 'marks'
+    ? [{ label: 'SUBJECT', w: tw * 0.46, align: 'left' as const }, { label: 'FULL', w: tw * 0.16, align: 'right' as const }, { label: 'OBTAINED', w: tw * 0.20, align: 'right' as const }, { label: 'REMARKS', w: tw * 0.18, align: 'center' as const }]
+    : [{ label: 'SUBJECT', w: tw * 0.52, align: 'left' as const }, { label: 'GRADE POINT', w: tw * 0.26, align: 'right' as const }, { label: 'GRADE', w: tw * 0.22, align: 'center' as const }];
+  const xAt = (i: number) => L + cols.slice(0, i).reduce((a, c) => a + c.w, 0);
+  const rowH = 16, tableTop = y;
+  doc.rect(L, y, tw, rowH).fill(BRAND);
+  doc.fillColor('white').font(bold).fontSize(8);
+  cols.forEach((c, i) => doc.text(c.label, xAt(i) + 4, y + 5, { width: c.w - 8, align: c.align, lineBreak: false }));
+  doc.fillColor('black'); y += rowH;
+
+  if (!sheet.subjects.length) {
+    doc.font(reg).fontSize(8.5).fillColor('#999').text('No marks entered', L, y + 4, { width: tw, align: 'center' }); y += rowH;
+  }
+  for (let idx = 0; idx < sheet.subjects.length; idx++) {
+    const s = sheet.subjects[idx];
+    if (idx % 2 === 1) { doc.rect(L, y, tw, rowH).fill('#f5f7fb'); doc.fillColor('black'); }
+    const cells = kind === 'marks'
+      ? [s.subject, String(s.maxMarks), String(s.marks), s.pass ? 'Pass' : 'Fail']
+      : [s.subject, s.gpa.toFixed(1), s.grade];
+    cols.forEach((c, i) => {
+      const remarks = kind === 'marks' && i === 3;
+      doc.font(reg).fontSize(8.5).fillColor(remarks ? (s.pass ? '#16a34a' : '#dc2626') : '#111')
+        .text(cells[i], xAt(i) + 4, y + 3.5, { width: c.w - 8, align: cols[i].align, lineBreak: false });
+    });
+    doc.fillColor('black'); y += rowH;
+  }
+  doc.save().lineWidth(0.6).strokeColor('#c9c9d6');
+  doc.rect(L, tableTop, tw, y - tableTop).stroke();
+  for (let i = 1; i < cols.length; i++) doc.moveTo(xAt(i), tableTop).lineTo(xAt(i), y).stroke();
+  doc.restore();
+
+  // ---- summary ----
+  y += 8;
+  doc.rect(L, y, tw, 34).fillAndStroke('#eeedf8', '#c9c9d6');
+  doc.font(bold).fontSize(9).fillColor(BRAND);
+  if (kind === 'marks') {
+    doc.text(`Total: ${sheet.total} / ${sheet.max}`, L + 8, y + 6, { lineBreak: false });
+    doc.text(`Percentage: ${sheet.percent}%`, L + 8, y + 19, { lineBreak: false });
+  } else {
+    doc.text(`GPA: ${sheet.gpa.toFixed(2)}`, L + 8, y + 6, { lineBreak: false });
+    doc.text(`Overall Grade: ${sheet.grade}`, L + 8, y + 19, { lineBreak: false });
+  }
+  doc.fillColor(BRAND).text(`Rank: ${sheet.rank || '—'} / ${sheet.classSize}`, L + tw / 2, y + 6, { lineBreak: false });
+  doc.fillColor(sheet.result === 'PASS' ? '#16a34a' : '#dc2626').text(`Result: ${sheet.result}`, L + tw / 2, y + 19, { lineBreak: false });
+  doc.fillColor('black');
+
+  // ---- signatures ----
+  const sigY = oy + H - 44;
+  doc.font(reg).fontSize(8).fillColor('black');
+  doc.text('__________________', L, sigY, { width: tw / 2, align: 'center' }).text('Class Teacher', L, sigY + 11, { width: tw / 2, align: 'center' });
+  doc.text('__________________', L + tw / 2, sigY, { width: tw / 2, align: 'center' }).text('Principal', L + tw / 2, sigY + 11, { width: tw / 2, align: 'center' });
+}
+
+/** Individual sheet, one A4 portrait page. */
+async function individualSheet(req: any, res: any, kind: 'marks' | 'grade') {
+  const examId = Number(req.query.examId), studentId = Number(req.query.studentId);
+  if (!examId || !studentId) throw new AppError(400, 'examId and studentId required');
+  const school = await getSchool();
+  const sheet = await buildSheet(examId, studentId);
+  if (!sheet) throw new AppError(404, 'Not found');
+  const file = `${kind === 'marks' ? 'marksheet' : 'gradesheet'}-${sheet.student.iemis || sheet.student.admissionNo}.pdf`;
+  streamPdf(res, file, (doc) => {
+    drawExamSheet(doc, 0, 0, doc.page.width, doc.page.height, kind, sheet, school);
+  }, { size: 'A4', margin: 0 });
+}
+router.get('/marksheet', asyncHandler((req, res) => individualSheet(req, res, 'marks')));
+router.get('/gradesheet', asyncHandler((req, res) => individualSheet(req, res, 'grade')));
+
+/** Whole class, 2 students per A4 landscape sheet (left/right halves). */
+async function classSheets(req: any, res: any, kind: 'marks' | 'grade') {
+  const examId = Number(req.query.examId), classId = Number(req.query.classId);
+  if (!examId || !classId) throw new AppError(400, 'examId and classId required');
+  const school = await getSchool();
+  const sheets = (await buildClassSheets(examId, classId)).filter((s) => s.subjects.length);
+  if (!sheets.length) throw new AppError(404, 'No results entered for this class');
+  const file = `class-${kind === 'marks' ? 'marksheet' : 'gradesheet'}-${sheets.length}.pdf`;
+  streamPdf(res, file, (doc) => {
+    const W = doc.page.width, H = doc.page.height, halfW = W / 2;
+    for (let p = 0; p * 2 < sheets.length; p++) {
+      if (p > 0) doc.addPage();
+      doc.save().dash(3, { space: 3 }).lineWidth(0.6).strokeColor('#bbbbbb').moveTo(halfW, 16).lineTo(halfW, H - 16).stroke().undash().restore();
+      sheets.slice(p * 2, p * 2 + 2).forEach((s, slot) => drawExamSheet(doc, slot * halfW, 0, halfW, H, kind, s, school));
+    }
+  }, { size: 'A4', margin: 0, layout: 'landscape' });
+}
+router.get('/class-marksheet', asyncHandler((req, res) => classSheets(req, res, 'marks')));
+router.get('/class-gradesheet', asyncHandler((req, res) => classSheets(req, res, 'grade')));
 
 export default router;
