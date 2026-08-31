@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import api, { apiError, downloadFile } from '@/lib/api';
+import api, { apiError } from '@/lib/api';
 import { useFetch } from '@/lib/useFetch';
+import { usePdfViewer } from '@/components/PdfViewer';
 import { PageHeader, Loading, EmptyState } from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
@@ -14,6 +15,7 @@ import { formatBS } from '@/lib/nepaliDate';
 
 export default function Exams() {
   const toast = useToast();
+  const openPdf = usePdfViewer();
 
   // ---- Exams tab ----
   const exams = useFetch<any[]>('/exams');
@@ -125,8 +127,8 @@ export default function Exams() {
       header: 'Sheets',
       accessor: (r) => (
         <div className="flex gap-1">
-          <Button size="sm" variant="outline" onClick={() => downloadFile(`/pdf/marksheet?examId=${rlExamId}&studentId=${r.studentId}`, `marksheet-${r.name}.pdf`)}>Marks</Button>
-          <Button size="sm" variant="outline" onClick={() => downloadFile(`/pdf/gradesheet?examId=${rlExamId}&studentId=${r.studentId}`, `gradesheet-${r.name}.pdf`)}>Grade</Button>
+          <Button size="sm" variant="outline" onClick={() => openPdf({ url: `/pdf/marksheet?examId=${rlExamId}&studentId=${r.studentId}`, filename: `marksheet-${r.name}.pdf`, title: `Marks Sheet — ${r.name}` })}>Marks</Button>
+          <Button size="sm" variant="outline" onClick={() => openPdf({ url: `/pdf/gradesheet?examId=${rlExamId}&studentId=${r.studentId}`, filename: `gradesheet-${r.name}.pdf`, title: `Grade Sheet — ${r.name}` })}>Grade</Button>
         </div>
       ),
     },
@@ -217,8 +219,8 @@ export default function Exams() {
                   </Table>
                   <div className="flex flex-wrap items-center gap-2">
                     <Button onClick={saveStudentMarks} disabled={meSaving}>{meSaving ? 'Saving…' : 'Save Marks'}</Button>
-                    <Button variant="outline" onClick={() => downloadFile(`/pdf/marksheet?examId=${meExamId}&studentId=${meStudentId}`, `marksheet-${meStudentName}.pdf`)}>Marks Sheet PDF</Button>
-                    <Button variant="outline" onClick={() => downloadFile(`/pdf/gradesheet?examId=${meExamId}&studentId=${meStudentId}`, `gradesheet-${meStudentName}.pdf`)}>Grade Sheet PDF</Button>
+                    <Button variant="outline" onClick={() => openPdf({ url: `/pdf/marksheet?examId=${meExamId}&studentId=${meStudentId}`, filename: `marksheet-${meStudentName}.pdf`, title: `Marks Sheet — ${meStudentName}` })}>Marks Sheet</Button>
+                    <Button variant="outline" onClick={() => openPdf({ url: `/pdf/gradesheet?examId=${meExamId}&studentId=${meStudentId}`, filename: `gradesheet-${meStudentName}.pdf`, title: `Grade Sheet — ${meStudentName}` })}>Grade Sheet</Button>
                   </div>
                 </>
               )}
@@ -239,8 +241,8 @@ export default function Exams() {
               {rlExamId && rlClassId && (
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-sm text-slate-500">Whole class (2 per A4 landscape):</span>
-                  <Button variant="outline" onClick={() => downloadFile(`/pdf/class-marksheet?examId=${rlExamId}&classId=${rlClassId}`, 'class-marksheet.pdf')}>Class Marks Sheet</Button>
-                  <Button variant="outline" onClick={() => downloadFile(`/pdf/class-gradesheet?examId=${rlExamId}&classId=${rlClassId}`, 'class-gradesheet.pdf')}>Class Grade Sheet</Button>
+                  <Button variant="outline" onClick={() => openPdf({ url: `/pdf/class-marksheet?examId=${rlExamId}&classId=${rlClassId}`, filename: 'class-marksheet.pdf', title: 'Class Marks Sheet (2 per page)' })}>Class Marks Sheet</Button>
+                  <Button variant="outline" onClick={() => openPdf({ url: `/pdf/class-gradesheet?examId=${rlExamId}&classId=${rlClassId}`, filename: 'class-gradesheet.pdf', title: 'Class Grade Sheet (2 per page)' })}>Class Grade Sheet</Button>
                 </div>
               )}
 
