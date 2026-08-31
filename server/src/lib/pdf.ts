@@ -6,6 +6,8 @@ import path from 'path';
 const BRAND = '#262081';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const LOGO_PATH = path.join(__dirname, '..', '..', 'assets', 'logo.png');
+export const QR_PATH = path.join(__dirname, '..', '..', 'assets', 'pay-qr.jpg');
+export const SIGN_PATH = path.join(__dirname, '..', '..', 'assets', 'signature.png');
 const NAME_FONT_PATH = path.join(__dirname, '..', '..', 'assets', 'fonts', 'vipnagorgialla-bold.otf');
 
 const BODY_FONT_PATH = path.join(__dirname, '..', '..', 'assets', 'fonts', 'DejaVuSans.ttf');
@@ -43,9 +45,9 @@ export function streamPdf(
   res: Response,
   filename: string,
   draw: (doc: PDFKit.PDFDocument) => void,
-  opts: { size?: string | [number, number]; margin?: number } = {},
+  opts: { size?: string | [number, number]; margin?: number; layout?: 'portrait' | 'landscape' } = {},
 ) {
-  const doc = new PDFDocument({ size: opts.size ?? 'A4', margin: opts.margin ?? 50 });
+  const doc = new PDFDocument({ size: opts.size ?? 'A4', margin: opts.margin ?? 50, layout: opts.layout ?? 'portrait' });
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
   doc.pipe(res);

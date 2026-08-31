@@ -119,7 +119,7 @@ export function StudentLedgerDialog({ open, studentId, onClose, onPreview }: {
                         <TD>{p.method}</TD>
                         <TD className="text-right">{inr(p.amount)}</TD>
                         <TD className="text-right text-red-600">{p.less ? inr(p.less) : '—'}</TD>
-                        <TD><Button size="sm" variant="ghost" onClick={() => onPreview({ url: `/pdf/receipt/${p.id}`, filename: `${p.receiptNo}.pdf`, title: 'Fee Receipt' })}>Receipt</Button></TD>
+                        <TD><Button size="sm" variant="ghost" onClick={() => onPreview({ url: `/pdf/receipt/${p.id}`, filename: `${String(p.receiptNo).replace(/\//g, '-')}.pdf`, title: 'Fee Receipt' })}>Receipt</Button></TD>
                       </TR>
                     ))}
                   </TBody>

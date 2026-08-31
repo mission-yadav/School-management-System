@@ -3,18 +3,25 @@ generator client {
   // "native" for local dev on this machine; "windows" so the packaged Windows app
   // ships the Windows query engine.
   binaryTargets = ["native", "windows"]
+  // driverAdapters: connect through node-postgres (Node's TLS/BoringSSL) instead of the
+  // engine's native TLS (Windows Schannel), which fails the Neon handshake on Windows 7.
+  previewFeatures = ["driverAdapters"]
 }
 
 datasource db {
-  // SQLite: embedded, zero-install — the app ships a single database file.
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  // PostgreSQL: one shared cloud database (Neon) so every device sees the same data.
+  //   url        -> the POOLED Neon endpoint (…-pooler…), used by the running app.
+  //   directUrl  -> the DIRECT (unpooled) endpoint, used by `prisma db push`/migrate.
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_DATABASE_URL")
 }
 
-// NOTE: SQLite (via Prisma) has no native enum / Json / Date types, so:
-//  - former enums are plain String columns (values unchanged, e.g. "ADMIN")
-//  - former Json columns are String columns holding JSON text
-//  - former @db.Date columns are plain DateTime
+// NOTE: this schema was kept portable while the app ran on SQLite, so on PostgreSQL:
+//  - former enums remain plain String columns (values unchanged, e.g. "ADMIN")
+//  - JSON columns (Setting.value, Certificate.dataJson) remain String (hold JSON text)
+//  - former @db.Date columns remain plain DateTime
+// Search queries already use `mode: 'insensitive'`, which PostgreSQL honours natively.
 
 // ============================================================ AUTH / USERS
 model User {
