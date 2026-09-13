@@ -8,6 +8,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const LOGO_PATH = path.join(__dirname, '..', '..', 'assets', 'logo.png');
 export const QR_PATH = path.join(__dirname, '..', '..', 'assets', 'pay-qr.jpg');
 export const SIGN_PATH = path.join(__dirname, '..', '..', 'assets', 'signature.png');
+export const PRINCIPAL_SIGN_PATH = path.join(__dirname, '..', '..', 'assets', 'principal-sign.png');
 const NAME_FONT_PATH = path.join(__dirname, '..', '..', 'assets', 'fonts', 'vipnagorgialla-bold.otf');
 
 const BODY_FONT_PATH = path.join(__dirname, '..', '..', 'assets', 'fonts', 'DejaVuSans.ttf');
@@ -57,58 +58,35 @@ export function streamPdf(
 
 /** Common branded letterhead on a white background. The school name uses the Vipnagorgialla
  *  display font; everything else stays Helvetica. Returns the y position to continue from. */
-export function letterhead(doc: PDFKit.PDFDocument, school: SchoolInfo): number {
-  const W = doc.page.width;
-  const bandH = 96;
+export function letterhead(doc: PDFKit.PDFDocument, school: SchoolInfo, top = 0, widthOverride?: number): number {
+  const W = widthOverride ?? doc.page.width;
+  const bandH = 100;
   const nameFont = schoolNameFont(doc);
-  try { doc.image(LOGO_PATH, 34, 12, { fit: [72, 72] }); } catch { /* logo optional */ }
+  try { doc.image(LOGO_PATH, 34, top + 14, { fit: [76, 76] }); } catch { /* logo optional */ }
 
-  // Right-hand PAN / Contact block — measure first so the name never overlaps it.
+  // School name — large & bold across the width; address + PAN/contact go on the line below.
+  const nameX = 118;
+  const maxNameW = W - 40 - nameX;
+  let nameSize = 34;
+  doc.font(nameFont).fontSize(nameSize);
+  while (nameSize > 18 && doc.widthOfString(school.name) > maxNameW) { nameSize -= 1; doc.fontSize(nameSize); }
+  const nameH = doc.currentLineHeight();
+  const nameY = top + 22;
+  doc.fillColor(BRAND).font(nameFont).fontSize(nameSize)
+    .text(school.name, nameX, nameY, { width: maxNameW, align: 'left', lineBreak: false });
+
+  // Address · PAN · Contact — one centred line under the name.
   const pan = school.pan || '305741055';
   const contact = school.phone || '9845186111';
-  const rLines = [`PAN No.:- ${pan}`, `Contact:- ${contact}`];
-  doc.font('Helvetica').fontSize(10);
-  const rLineH = doc.currentLineHeight();
-  const rWidth = Math.max(...rLines.map((l) => doc.widthOfString(l))) + 2;
-  const rLeft = W - 40 - rWidth;
-
-  // School name — as large as fits the space left of the contact block, in the display font.
-  const nameX = 120;
-  const maxNameW = rLeft - 28 - nameX;
-  let nameSize = 26;
-  doc.font(nameFont).fontSize(nameSize);
-  while (nameSize > 12 && doc.widthOfString(school.name) > maxNameW) {
-    nameSize -= 1;
-    doc.fontSize(nameSize);
-  }
-  const nameW = doc.widthOfString(school.name);
-  const nameH = doc.currentLineHeight();
-
-  const addrSize = 11;
-  doc.font('Helvetica').fontSize(addrSize);
-  const addrH = school.address ? doc.currentLineHeight() : 0;
-  const gap = school.address ? 4 : 0;
-  const top = (bandH - (nameH + gap + addrH)) / 2;
-
-  doc.fillColor(BRAND).font(nameFont).fontSize(nameSize)
-    .text(school.name, nameX, top, { lineBreak: false });
-  if (school.address) {
-    doc.fillColor('#444').font('Helvetica').fontSize(addrSize)
-      .text(school.address, nameX, top + nameH + gap, { width: nameW, align: 'center', lineBreak: false });
-  }
-
-  // Contact block, vertically centred in the band.
-  let ry = (bandH - (rLineH * rLines.length + 3)) / 2;
-  doc.font('Helvetica').fontSize(10).fillColor('#444');
-  for (const ln of rLines) {
-    doc.text(ln, rLeft, ry, { lineBreak: false });
-    ry += rLineH + 3;
-  }
+  const sub = [school.address, `PAN No.:- ${pan}`, `Contact:- ${contact}`].filter(Boolean).join('     ·     ');
+  doc.fillColor('#444').font('Helvetica').fontSize(10)
+    .text(sub, nameX, nameY + nameH + 5, { width: maxNameW, align: 'center', lineBreak: false });
 
   // brand rule under the letterhead
-  doc.moveTo(34, bandH).lineTo(W - 34, bandH).lineWidth(2).strokeColor(BRAND).stroke();
+  const ruleY = top + bandH;
+  doc.moveTo(34, ruleY).lineTo(W - 34, ruleY).lineWidth(2).strokeColor(BRAND).stroke();
   doc.lineWidth(1).fillColor('black');
-  return bandH + 24;
+  return ruleY + 24;
 }
 
 export function heading(doc: PDFKit.PDFDocument, title: string, y: number) {
@@ -122,6 +100,8 @@ export function signatureBlock(doc: PDFKit.PDFDocument, role = 'Principal / Auth
   doc.fontSize(11).font('Helvetica');
   doc.text('_____________________', 50, y);
   doc.text('Date', 50, y + 15);
+  // principal's signature, centred over the right-hand signature line
+  if (/principal/i.test(role)) { try { doc.image(PRINCIPAL_SIGN_PATH, 440 - 107 / 2, y - 114, { fit: [138, 126] }); } catch { /* signature optional */ } }
   doc.text('_____________________', 380, y);
   doc.text(role, 380, y + 15);
 }

@@ -1,0 +1,27 @@
+# Render Blueprint — hosts the Janaki School API + web app (PWA) on the free tier.
+# The one web service builds the client, builds the server, and serves both on one
+# HTTPS origin. Phones open the URL and "Add to Home Screen". Desktop app is unaffected.
+#
+# After connecting the repo, set the three secret env vars (marked sync:false) in the
+# Render dashboard — copy them from server/.env. See DEPLOY-PHONE.md for the walkthrough.
+services:
+  - type: web
+    name: janaki-school
+    runtime: node
+    plan: free
+    region: singapore          # closest to Nepal + matches the Neon (ap-southeast-1) region
+    buildCommand: npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: CLIENT_DIST
+        value: client/dist
+      - key: DATABASE_URL          # Neon DIRECT connection string (from server/.env)
+        sync: false
+      - key: JWT_ACCESS_SECRET     # from server/.env
+        sync: false
+      - key: JWT_REFRESH_SECRET    # from server/.env
+        sync: false

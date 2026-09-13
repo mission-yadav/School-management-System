@@ -254,12 +254,12 @@ function InvoicesTab() {
   // ---- payment dialog ----
   const [openPay, setOpenPay] = useState(false);
   const [payRow, setPayRow] = useState<any>(null);
-  const [pay, setPay] = useState<any>({ amount: '', less: '', method: 'CASH', reference: '' });
-  function startPay(row: any) { setPayRow(row); setPay({ amount: String(row.due ?? ''), less: '', method: 'CASH', reference: '' }); setOpenPay(true); }
+  const [pay, setPay] = useState<any>({ amount: '', less: '', method: 'CASH', reference: '', manualReceiptNo: '' });
+  function startPay(row: any) { setPayRow(row); setPay({ amount: String(row.due ?? ''), less: '', method: 'CASH', reference: '', manualReceiptNo: '' }); setOpenPay(true); }
   async function collect(printReceipt: boolean) {
     if (!payRow) return;
     try {
-      const res = await api.post(`/fees/${payRow.id}/pay`, { amount: Number(pay.amount || 0), less: Number(pay.less || 0), method: pay.method, reference: pay.reference });
+      const res = await api.post(`/fees/${payRow.id}/pay`, { amount: Number(pay.amount || 0), less: Number(pay.less || 0), method: pay.method, reference: pay.reference, manualReceiptNo: pay.manualReceiptNo });
       const { receiptNo, paymentId } = res.data || {};
       toast(`Payment recorded · ${receiptNo}`); setOpenPay(false); reload();
       if (printReceipt && paymentId) setPreview({ url: `/pdf/receipt/${paymentId}`, filename: `${String(receiptNo).replace(/\//g, '-')}.pdf`, title: 'Fee Receipt' });
@@ -286,6 +286,7 @@ function InvoicesTab() {
     ...COMPONENTS.map((c) => ({ key: c.key, header: c.header, className: 'text-right whitespace-nowrap', render: (r: any) => c.key === 'monthlyTuition' ? <MonthlyCell m={r.monthly} /> : money(r.components?.[c.key]) })),
     { key: 'total', header: 'Total', className: 'text-right font-medium', render: (r) => inr(r.total) },
     { key: 'paid', header: 'Paid', className: 'text-right font-medium text-green-600', render: (r) => inr(r.paid) },
+    { key: 'concession', header: 'Less', className: 'text-right font-medium text-amber-600', render: (r) => r.concession ? inr(r.concession) : <span className="text-slate-400">—</span> },
     { key: 'due', header: 'Dues', className: 'text-right', render: (r) => (
       <span className={`inline-block rounded-md px-2.5 py-1 text-sm font-semibold ${r.due > 0 ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'}`}>{inr(r.due)}</span>
     ) },
@@ -297,7 +298,7 @@ function InvoicesTab() {
         <DropdownMenuContent>
           <DropdownMenuItem onSelect={() => setFeeEdit({ open: true, invoiceId: r.id, studentId: r.studentId })}><Pencil className="size-4" /> Edit Fees</DropdownMenuItem>
           <DropdownMenuItem onSelect={() => setPreview({ url: `/pdf/intimation/${r.id}`, filename: `intimation-${r.id}.pdf`, title: 'Fee Intimation Card' })}><FileText className="size-4" /> Intimation</DropdownMenuItem>
-          {r.status !== 'PAID' && <DropdownMenuItem onSelect={() => startPay(r)}><Wallet className="size-4" /> Collect Payment</DropdownMenuItem>}
+          <DropdownMenuItem onSelect={() => startPay(r)}><Wallet className="size-4" /> Collect Payment</DropdownMenuItem>
           <DropdownMenuItem onSelect={() => setCorrectId(r.studentId)}><Undo2 className="size-4" /> Paid Correction</DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem onSelect={() => setLedgerId(r.studentId)}><ScrollText className="size-4" /> Record / Ledger</DropdownMenuItem>
@@ -375,6 +376,7 @@ function InvoicesTab() {
                 </Select>
               </Field>
               <Field label="Reference"><Input value={pay.reference} onChange={(e) => setPay({ ...pay, reference: e.target.value })} /></Field>
+              <Field label="Receipt No (optional)"><Input value={pay.manualReceiptNo} onChange={(e) => setPay({ ...pay, manualReceiptNo: e.target.value })} placeholder="Auto if left blank" /></Field>
               <div className="col-span-2 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
                 Balance cleared this time: <b>{inr(Number(pay.amount || 0) + Number(pay.less || 0))}</b>
                 <span className="text-slate-400"> ({inr(pay.amount || 0)} paid + {inr(pay.less || 0)} less)</span>

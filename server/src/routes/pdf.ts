@@ -2,11 +2,11 @@ import { Router } from 'express';
 import prisma from '../prisma.js';
 import { authRequired } from '../middleware/auth.js';
 import { asyncHandler, AppError, intParam } from '../lib/http.js';
-import { streamPdf, letterhead, heading, signatureBlock, schoolNameFont, bodyFonts, BRAND, LOGO_PATH, QR_PATH, SIGN_PATH, type SchoolInfo } from '../lib/pdf.js';
+import { streamPdf, letterhead, heading, signatureBlock, schoolNameFont, bodyFonts, BRAND, LOGO_PATH, QR_PATH, SIGN_PATH, PRINCIPAL_SIGN_PATH, type SchoolInfo } from '../lib/pdf.js';
 import { bsDate } from '../lib/nepaliDate.js';
 import { computeAudit, type Line } from '../lib/audit.js';
 import { getBillingPeriod, ensureAllLedgers, BS_MONTHS, buildSerialMap, serialNo, type BSPeriod } from '../lib/ledger.js';
-import { buildSheet, buildClassSheets, type Sheet } from '../lib/exam.js';
+import { buildSheet, buildClassSheets, nebScale, nebFinal, type Sheet } from '../lib/exam.js';
 
 /** "Up to Shrawan 2083" — the fee period the document covers (the billing month). */
 function upToLabel(period: BSPeriod) {
@@ -412,8 +412,9 @@ function drawReceiptPanel(doc: PDFKit.PDFDocument, ox: number, oy: number, schoo
 
   let y = panelHead(doc, ox, oy, L, R, school, reg);
   y = titleBox(doc, L, R, y, bold, 'FEE RECEIPT');
+  const receiptLabel = payment.manualReceiptNo?.trim() || serialNo((inv.student as any)._sn, period.year);
   doc.font(reg).fontSize(7.5).fillColor('#555')
-    .text(`Receipt No: ${serialNo((inv.student as any)._sn, period.year)}`, L, y, { lineBreak: false })
+    .text(`Receipt No: ${receiptLabel}`, L, y, { lineBreak: false })
     .text(`Date: ${bsDate(payment.paidAt)}`, L, y, { width: R - L, align: 'right', lineBreak: false });
   doc.fillColor('black'); y += 14;
 
@@ -672,6 +673,100 @@ router.get('/fee-register', asyncHandler(async (req, res) => {
   }, { size: 'A4', margin: 30, layout: 'landscape' });
 }));
 
+/** GET /api/pdf/salary-sheet?year=&month= — monthly Salary sheet (A4 landscape).
+ *  Staffs / Post / Total are filled from the roster; Absent / TDS / Paid / Sign print blank. */
+router.get('/salary-sheet', asyncHandler(async (req, res) => {
+  const school = await getSchool();
+  const period = await getBillingPeriod();
+  const year = Number(req.query.year) || period.year;
+  const month = Number(req.query.month) || period.month;
+  const monthName = BS_MONTHS[(month - 1 + 12) % 12] || '';
+  const staff = await prisma.salaryEmployee.findMany({ where: { active: true }, orderBy: [{ order: 'asc' }, { id: 'asc' }] });
+  const pays = await prisma.salaryPayment.findMany({ where: { bsYear: year, bsMonth: month } });
+  const payByEmp = new Map(pays.map((p) => [p.employeeId, p]));
+
+  streamPdf(res, `salary-${monthName}-${year}.pdf`, (doc) => {
+    const { reg, bold } = bodyFonts(doc);
+    const W = doc.page.width, H = doc.page.height;
+    const cols: { key: string; label: string; w: number; align: 'left' | 'right' | 'center' }[] = [
+      { key: 'staff', label: 'Staffs', w: 200, align: 'left' },
+      { key: 'post', label: 'Post', w: 65, align: 'left' },
+      { key: 'total', label: 'Total', w: 75, align: 'right' },
+      { key: 'absent', label: 'Absent', w: 65, align: 'center' },
+      { key: 'tds', label: 'TDS', w: 65, align: 'center' },
+      { key: 'paid', label: 'Paid', w: 75, align: 'right' },
+    ];
+    const tableW = cols.reduce((a, c) => a + c.w, 0);
+    const startX = Math.round((W - tableW) / 2);
+    const xAt = (i: number) => startX + cols.slice(0, i).reduce((a, c) => a + c.w, 0);
+    const bounds = cols.map((_, i) => xAt(i)).concat([startX + tableW]);
+    const contTop = 40, bottom = H - 44;
+    const PAD = 6, ROW_H = 26, HEAD_H = 22;
+    const GRID = '#94a3b8', OUTER = BRAND;
+
+    let y = 0, boxTop = 0, vertTop = 0, open = false;
+    const flush = () => {
+      if (!open) return;
+      doc.save();
+      doc.lineWidth(0.8).strokeColor(GRID);
+      for (let i = 1; i < bounds.length - 1; i++) doc.moveTo(bounds[i], vertTop).lineTo(bounds[i], y).stroke();
+      doc.lineWidth(2).strokeColor(OUTER).rect(startX, boxTop, tableW, y - boxTop).stroke();
+      doc.restore();
+      open = false;
+    };
+    const hline = (yy: number, w: number, c: string) => { doc.save().lineWidth(w).strokeColor(c).moveTo(startX, yy).lineTo(startX + tableW, yy).stroke().restore(); };
+
+    const openHead = () => {
+      boxTop = y;
+      doc.rect(startX, y, tableW, HEAD_H).fill(BRAND);
+      doc.fillColor('white').font(bold).fontSize(10);
+      cols.forEach((c, i) => doc.text(c.label, xAt(i) + PAD, y + 7, { width: c.w - 2 * PAD, align: c.align, lineBreak: false }));
+      doc.save().lineWidth(0.5).strokeColor('#ffffff');
+      for (let i = 1; i < bounds.length - 1; i++) doc.moveTo(bounds[i], y).lineTo(bounds[i], y + HEAD_H).stroke();
+      doc.restore();
+      doc.fillColor('black'); y += HEAD_H; vertTop = y; open = true; hline(y, 1.2, OUTER);
+    };
+
+    // title header (two lines so it fits the narrower portrait width)
+    y = contTop;
+    try { doc.image(LOGO_PATH, startX, y, { fit: [32, 32] }); } catch { /* logo optional */ }
+    doc.fillColor(BRAND).font(schoolNameFont(doc)).fontSize(16).text(school.name, startX + 40, y + 8, { width: tableW - 40, lineBreak: false });
+    y += 38;
+    doc.fillColor('black').font(bold).fontSize(13).text(`Salary for the Months of ${monthName} ${year}`, startX, y, { width: tableW, align: 'center' });
+    y += 24;
+
+    openHead();
+    if (!staff.length) {
+      doc.font(reg).fontSize(11).fillColor('#94a3b8').text('No staff in the salary roster yet.', startX, y + 12, { width: tableW, align: 'center' });
+      y += 34; flush();
+    } else {
+      staff.forEach((s, idx) => {
+        if (y + ROW_H > bottom) { flush(); doc.addPage(); y = contTop; openHead(); }
+        if (idx % 2 === 1) { doc.rect(startX, y, tableW, ROW_H).fill('#f5f7fb'); doc.fillColor('black'); }
+        const name = s.idNo ? `${s.name} (${s.idNo})` : s.name;
+        const vy = y + 9;
+        doc.font(reg).fontSize(9.5).fillColor('#111').text(name, xAt(0) + PAD, vy, { width: cols[0].w - 2 * PAD, lineBreak: false, ellipsis: true });
+        doc.fillColor('#334155').text(s.post || '', xAt(1) + PAD, vy, { width: cols[1].w - 2 * PAD, lineBreak: false, ellipsis: true });
+        doc.font(bold).text(s.total ? Number(s.total).toLocaleString('en-IN') : '', xAt(2) + PAD, vy, { width: cols[2].w - 2 * PAD, align: 'right', lineBreak: false });
+        // Absent / TDS / Paid from the recorded payment for this month; blank if not yet paid.
+        // Sign is always left blank for a physical signature.
+        const p = payByEmp.get(s.id);
+        if (p) {
+          doc.font(reg).fontSize(9.5).fillColor('#111')
+            .text(String(p.absentDays ?? ''), xAt(3) + PAD, vy, { width: cols[3].w - 2 * PAD, align: cols[3].align, lineBreak: false })
+            .text(p.tds ? Number(p.tds).toLocaleString('en-IN') : '0', xAt(4) + PAD, vy, { width: cols[4].w - 2 * PAD, align: cols[4].align, lineBreak: false });
+          doc.font(bold).text(p.paid != null ? Number(p.paid).toLocaleString('en-IN') : '', xAt(5) + PAD, vy, { width: cols[5].w - 2 * PAD, align: cols[5].align, lineBreak: false });
+        }
+        doc.fillColor('black'); y += ROW_H; hline(y, 0.6, '#dbe0ea');
+      });
+      flush();
+    }
+
+    doc.font(reg).fontSize(8.5).fillColor('#94a3b8')
+      .text(`Generated ${bsDate(new Date())} (BS)  ·  ${school.name}`, startX, H - 46, { width: tableW, align: 'center', lineBreak: false });
+  }, { size: 'A4', margin: 30, layout: 'portrait' });
+}));
+
 /** GET /api/pdf/audit — NFRS Income & Expenditure Statement + Balance Sheet */
 router.get('/audit', asyncHandler(async (_req, res) => {
   const school = await getSchool();
@@ -783,7 +878,7 @@ router.get('/report-card', asyncHandler(async (req, res) => {
 /* ============================================================ EXAM SHEETS */
 /** Draw one student's marks-sheet OR grade-sheet inside a box (ox,oy,W,H).
  *  Same card is used full-page (individual) and half-page (2-up class landscape). */
-function drawExamSheet(doc: PDFKit.PDFDocument, ox: number, oy: number, W: number, H: number, kind: 'marks' | 'grade', sheet: Sheet, school: SchoolInfo) {
+function drawExamSheet(doc: PDFKit.PDFDocument, ox: number, oy: number, W: number, H: number, kind: 'marks' | 'grade' | 'monthly', sheet: Sheet, school: SchoolInfo) {
   const pad = 16;
   const L = ox + pad, R = ox + W - pad, tw = R - L;
   const { reg, bold } = bodyFonts(doc);
@@ -791,7 +886,7 @@ function drawExamSheet(doc: PDFKit.PDFDocument, ox: number, oy: number, W: numbe
   doc.save().lineWidth(2).strokeColor(BRAND).rect(ox + 8, oy + 8, W - 16, H - 16).stroke().restore(); // card border
 
   let y = panelHead(doc, ox, oy, L, R, school, reg);
-  y = titleBox(doc, L, R, y, bold, kind === 'marks' ? 'MARKS SHEET' : 'GRADE SHEET');
+  y = titleBox(doc, L, R, y, bold, kind === 'grade' ? 'GRADE SHEET' : 'MARKS SHEET');
   doc.font(reg).fontSize(8).fillColor('#555')
     .text(`${sheet.exam?.name ?? 'Exam'}${sheet.exam?.term ? '  ·  ' + sheet.exam.term : ''}`, L, y, { width: tw, align: 'center', lineBreak: false });
   doc.fillColor('black'); y += 15;
@@ -802,7 +897,9 @@ function drawExamSheet(doc: PDFKit.PDFDocument, ox: number, oy: number, W: numbe
 
   // ---- table ----
   const cols = kind === 'marks'
-    ? [{ label: 'SUBJECT', w: tw * 0.46, align: 'left' as const }, { label: 'FULL', w: tw * 0.16, align: 'right' as const }, { label: 'OBTAINED', w: tw * 0.20, align: 'right' as const }, { label: 'REMARKS', w: tw * 0.18, align: 'center' as const }]
+    ? [{ label: 'SUBJECT', w: tw * 0.34, align: 'left' as const }, { label: 'FULL', w: tw * 0.12, align: 'right' as const }, { label: 'TH', w: tw * 0.13, align: 'right' as const }, { label: 'PR', w: tw * 0.13, align: 'right' as const }, { label: 'OBT', w: tw * 0.14, align: 'right' as const }, { label: 'REMARKS', w: tw * 0.14, align: 'center' as const }]
+    : kind === 'monthly'
+    ? [{ label: 'SUBJECT', w: tw * 0.40, align: 'left' as const }, { label: 'FULL', w: tw * 0.15, align: 'right' as const }, { label: 'PASS', w: tw * 0.15, align: 'right' as const }, { label: 'OBTAINED', w: tw * 0.15, align: 'right' as const }, { label: 'REMARKS', w: tw * 0.15, align: 'center' as const }]
     : [{ label: 'SUBJECT', w: tw * 0.52, align: 'left' as const }, { label: 'GRADE POINT', w: tw * 0.26, align: 'right' as const }, { label: 'GRADE', w: tw * 0.22, align: 'center' as const }];
   const xAt = (i: number) => L + cols.slice(0, i).reduce((a, c) => a + c.w, 0);
   const rowH = 16, tableTop = y;
@@ -818,10 +915,16 @@ function drawExamSheet(doc: PDFKit.PDFDocument, ox: number, oy: number, W: numbe
     const s = sheet.subjects[idx];
     if (idx % 2 === 1) { doc.rect(L, y, tw, rowH).fill('#f5f7fb'); doc.fillColor('black'); }
     const cells = kind === 'marks'
-      ? [s.subject, String(s.maxMarks), String(s.marks), s.pass ? 'Pass' : 'Fail']
-      : [s.subject, s.gpa.toFixed(1), s.grade];
+      ? [s.subject, String(s.maxMarks),
+         s.absent ? '—' : (s.theory != null ? String(s.theory) : '—'),
+         s.practicalFull === 0 ? '—' : (s.absent ? '—' : (s.practical != null ? String(s.practical) : '—')),
+         s.absent ? 'ABS' : String(s.marks),
+         s.absent ? 'Absent' : (s.pass ? 'Pass' : 'Fail')]
+      : kind === 'monthly'
+      ? [s.subject, String(s.maxMarks), String(s.passMarks), s.absent ? 'ABS' : String(s.marks), s.absent ? 'Absent' : (s.pass ? 'Pass' : 'Fail')]
+      : [s.subject, s.absent ? '—' : s.gpa.toFixed(1), s.grade];
     cols.forEach((c, i) => {
-      const remarks = kind === 'marks' && i === 3;
+      const remarks = (kind === 'marks' && i === 5) || (kind === 'monthly' && i === 4);
       doc.font(reg).fontSize(8.5).fillColor(remarks ? (s.pass ? '#16a34a' : '#dc2626') : '#111')
         .text(cells[i], xAt(i) + 4, y + 3.5, { width: c.w - 8, align: cols[i].align, lineBreak: false });
     });
@@ -836,12 +939,12 @@ function drawExamSheet(doc: PDFKit.PDFDocument, ox: number, oy: number, W: numbe
   y += 8;
   doc.rect(L, y, tw, 34).fillAndStroke('#eeedf8', '#c9c9d6');
   doc.font(bold).fontSize(9).fillColor(BRAND);
-  if (kind === 'marks') {
-    doc.text(`Total: ${sheet.total} / ${sheet.max}`, L + 8, y + 6, { lineBreak: false });
-    doc.text(`Percentage: ${sheet.percent}%`, L + 8, y + 19, { lineBreak: false });
-  } else {
+  if (kind === 'grade') {
     doc.text(`GPA: ${sheet.gpa.toFixed(2)}`, L + 8, y + 6, { lineBreak: false });
     doc.text(`Overall Grade: ${sheet.grade}`, L + 8, y + 19, { lineBreak: false });
+  } else {
+    doc.text(`Total: ${sheet.total} / ${sheet.max}`, L + 8, y + 6, { lineBreak: false });
+    doc.text(`Percentage: ${sheet.percent}%`, L + 8, y + 19, { lineBreak: false });
   }
   doc.fillColor(BRAND).text(`Rank: ${sheet.rank || '—'} / ${sheet.classSize}`, L + tw / 2, y + 6, { lineBreak: false });
   doc.fillColor(sheet.result === 'PASS' ? '#16a34a' : '#dc2626').text(`Result: ${sheet.result}`, L + tw / 2, y + 19, { lineBreak: false });
@@ -854,37 +957,361 @@ function drawExamSheet(doc: PDFKit.PDFDocument, ox: number, oy: number, W: numbe
   doc.text('__________________', L + tw / 2, sigY, { width: tw / 2, align: 'center' }).text('Principal', L + tw / 2, sigY + 11, { width: tw / 2, align: 'center' });
 }
 
-/** Individual sheet, one A4 portrait page. */
+/* ---- NEB-style result sheet (grade or marks), adapted for the school ----
+ * Uses the shared NEB 4.0 scale + credit-weighted GPA from lib/exam (nebScale/nebFinal). */
+type NebExtra = { dob: Date | null; fatherName: string | null; address: string | null; photoUrl: string | null };
+/** Draws the sheet into a logical A4-portrait canvas, optionally translated/scaled into a
+ *  sub-region (used to place two monthly marks sheets on one landscape A4). */
+function drawNebSheet(doc: PDFKit.PDFDocument, sheet: Sheet, school: SchoolInfo, extra: NebExtra, kind: 'grade' | 'marks' | 'monthly', opts: { ox?: number; oy?: number; scale?: number } = {}) {
+  const { reg, bold } = bodyFonts(doc);
+  const W = 595.28, H = 841.89; // logical A4 portrait; placed/scaled via opts
+  const L = 40, R = W - 40, tw = R - L;
+  const ox = opts.ox ?? 0, oy = opts.oy ?? 0, sc = opts.scale ?? 1;
+  const monthly = kind === 'monthly';
+
+  // everything is positioned absolutely (and possibly scaled) — stop PDFKit from auto-adding
+  // pages when logical y exceeds the physical page height.
+  doc.page.margins.bottom = -100000;
+
+  doc.save();
+  doc.translate(ox, oy);
+  if (sc !== 1) doc.scale(sc);
+
+  // double-line page border
+  doc.save();
+  doc.lineWidth(2).strokeColor(BRAND).rect(18, 18, W - 36, H - 36).stroke();
+  doc.lineWidth(0.8).strokeColor(BRAND).rect(23, 23, W - 46, H - 46).stroke();
+  doc.restore();
+
+  let y = letterhead(doc, school, 22, W); // offset so the header sits inside the page border
+  // title inside a single-line bold border box
+  const gtText = kind === 'grade' ? 'GRADE SHEET' : 'MARKS SHEET';
+  doc.font(bold).fontSize(14);
+  const gtW = doc.widthOfString(gtText) + 40;
+  const gtH = 26;
+  const gtX = L + (tw - gtW) / 2;
+  doc.save().lineWidth(1.6).strokeColor(BRAND).rect(gtX, y, gtW, gtH).stroke().restore();
+  doc.fillColor(BRAND).font(bold).fontSize(14).text(gtText, gtX, y + 7, { width: gtW, align: 'center' });
+  y += gtH + 10;
+  const examLine = [sheet.exam?.name, sheet.exam?.term, sheet.exam?.sessionLabel].filter(Boolean).join('  ·  ');
+  doc.fillColor('#111').font(bold).fontSize(18);
+  doc.text(examLine || 'Examination', L, y, { width: tw, align: 'center' });
+  y += doc.heightOfString(examLine || 'Examination', { width: tw, align: 'center' }) + 10;
+
+  // ---- info block (a passport-photo box is reserved at the top-right) ----
+  const info = (label: string, value: string, x: number, w: number, boldValue = false) => {
+    doc.font(bold).fontSize(13.5).fillColor('#111').text(label, x, y, { lineBreak: false });
+    const lw = doc.widthOfString(label) + 4;
+    doc.font(boldValue ? bold : reg).fontSize(13.5).fillColor('#111').text(value || '—', x + lw, y, { width: w - lw, lineBreak: false });
+  };
+  const infoTop = y;
+  const pbw = 78, pbh = 92, pbx = R - pbw, pby = infoTop;
+  const infoW = monthly ? tw : tw - pbw - 16; // monthly: no photo, use full width
+  const symbol = sheet.student.iemis || sheet.student.admissionNo;
+  const secured = kind === 'grade' ? 'The grade(s) secured by:  ' : 'The marks secured by:  ';
+  const roll = String(sheet.student.rollNo ?? '—');
+  const cls = romanClass(sheet.student.className);
+  if (monthly) {
+    // Class & Roll pinned to the far right (short values → names get almost the full width);
+    // Symbol No sits a little left of them since it's long.
+    const shortX = L + infoW - 90;
+    const symX = L + infoW - 250;
+    info('Name:  ', sheet.student.name, L, shortX - L - 6, true); info('Class:  ', cls, shortX, 90); y += 21;
+    info("Father's Name:  ", extra.fatherName || '—', L, shortX - L - 6); info('Roll No:  ', roll, shortX, 90); y += 21;
+    info('Address:  ', extra.address || '—', L, symX - L - 6); info('Symbol No:  ', symbol, symX, 250); y += 21;
+  } else {
+    // terminal has a photo on the right → keep a single column so nothing clips
+    const halfW2 = infoW / 2;
+    info(secured, sheet.student.name, L, infoW, true); y += 21;
+    info("Father's Name:  ", extra.fatherName || '—', L, infoW); y += 21;
+    info('Class:  ', cls, L, halfW2); info('Roll No:  ', roll, L + halfW2, halfW2); y += 21;
+    info('Symbol No:  ', symbol, L, infoW); y += 21;
+    info('Address:  ', extra.address || '—', L, infoW); y += 21;
+  }
+
+  // photo box (skipped for monthly) — renders the student's photo if available, else a placeholder
+  if (!monthly) {
+    doc.save().rect(pbx, pby, pbw, pbh).lineWidth(0.8).strokeColor('#9aa1b0').stroke().restore();
+    let drewPhoto = false;
+    if (extra.photoUrl) { try { doc.image(extra.photoUrl, pbx + 2, pby + 2, { fit: [pbw - 4, pbh - 4], align: 'center', valign: 'center' }); drewPhoto = true; } catch { /* placeholder below */ } }
+    if (!drewPhoto) doc.font(reg).fontSize(8).fillColor('#94a3b8').text("Student's\nPhoto", pbx, pby + pbh / 2 - 10, { width: pbw, align: 'center' });
+  }
+  doc.fillColor('#111');
+  y = Math.max(y, infoTop + (monthly ? 0 : pbh)) + 6;
+
+  // ---- table (grade: credit/grade-point/grade per component; marks: theory/practical/total) ----
+  const cols = kind === 'grade'
+    ? [
+        { label: 'S.N.', w: 34, align: 'center' as const },
+        { label: 'SUBJECTS', w: 196, align: 'left' as const },
+        { label: 'CREDIT HOUR', w: 60, align: 'center' as const },
+        { label: 'GRADE POINT', w: 60, align: 'center' as const },
+        { label: 'GRADE', w: 48, align: 'center' as const },
+        { label: 'FINAL GRADE', w: 62, align: 'center' as const },
+        { label: 'REMARKS', w: tw - 34 - 196 - 60 - 60 - 48 - 62, align: 'center' as const },
+      ]
+    : monthly
+    ? [
+        { label: 'S.N.', w: 34, align: 'center' as const },
+        { label: 'SUBJECTS', w: 176, align: 'left' as const },
+        { label: 'FULL MARKS', w: 82, align: 'center' as const },
+        { label: 'PASS MARKS', w: 82, align: 'center' as const },
+        { label: 'OBTAINED', w: 66, align: 'center' as const },
+        { label: 'REMARKS', w: tw - 34 - 176 - 82 - 82 - 66, align: 'center' as const },
+      ]
+    : [
+        { label: 'S.N.', w: 34, align: 'center' as const },
+        { label: 'SUBJECTS', w: 190, align: 'left' as const },
+        { label: 'FULL MARKS', w: 60, align: 'center' as const },
+        { label: 'THEORY', w: 56, align: 'center' as const },
+        { label: 'PRACTICAL', w: 60, align: 'center' as const },
+        { label: 'TOTAL', w: 48, align: 'center' as const },
+        { label: 'REMARKS', w: tw - 34 - 190 - 60 - 56 - 60 - 48, align: 'center' as const },
+      ];
+  const xAt = (i: number) => L + cols.slice(0, i).reduce((a, c) => a + c.w, 0);
+  const headH = monthly ? 30 : 24, headTop = y;
+  doc.rect(L, y, tw, headH).fill(BRAND);
+  doc.fillColor('white').font(bold).fontSize(monthly ? 9 : 7.5);
+  cols.forEach((c, i) => doc.text(c.label, xAt(i) + 3, y + (monthly ? 11 : 5), { width: c.w - 6, align: c.align, lineBreak: false }));
+  y += headH;
+  const bodyTop = y;
+
+  const rowH = monthly ? 24 : 15;
+  let totalCH = 0, totalGPxCH = 0;   // grade totals
+  let totMarks = 0, totMax = 0;       // marks totals
+
+  if (kind === 'grade') {
+    sheet.subjects.forEach((s, idx) => {
+      const comps: { label: string; ch: number; grade: string; gp: number }[] = [];
+      const thPct = s.theoryFull ? (Number(s.theory || 0) / s.theoryFull) * 100 : 0;
+      comps.push({ label: `${s.subject} (TH)`, ch: s.theoryFull / 25, ...nebScale(thPct) });
+      if (s.practicalFull > 0) {
+        const prPct = s.practicalFull ? (Number(s.practical || 0) / s.practicalFull) * 100 : 0;
+        comps.push({ label: `${s.subject} (PR)`, ch: s.practicalFull / 25, ...nebScale(prPct) });
+      }
+      const blockTop = y;
+      let subjCH = 0, subjGPxCH = 0;
+      comps.forEach((cp) => {
+        doc.font(reg).fontSize(8.5).fillColor('#111');
+        doc.text(cp.label, xAt(1) + 4, y + 3.5, { width: cols[1].w - 8, lineBreak: false, ellipsis: true });
+        doc.text(cp.ch.toFixed(2), xAt(2) + 3, y + 3.5, { width: cols[2].w - 6, align: 'center', lineBreak: false });
+        doc.text(s.absent ? '-' : cp.gp.toFixed(1), xAt(3) + 3, y + 3.5, { width: cols[3].w - 6, align: 'center', lineBreak: false });
+        doc.text(s.absent ? 'ABS' : cp.grade, xAt(4) + 3, y + 3.5, { width: cols[4].w - 6, align: 'center', lineBreak: false });
+        const remark = s.absent || cp.grade === 'NG' ? 'FAIL' : 'PASS';
+        doc.font(bold).fillColor(remark === 'PASS' ? '#16a34a' : '#dc2626')
+          .text(remark, xAt(6) + 3, y + 3.5, { width: cols[6].w - 6, align: 'center', lineBreak: false });
+        doc.fillColor('#111');
+        totalCH += cp.ch; totalGPxCH += (s.absent ? 0 : cp.gp) * cp.ch;
+        subjCH += cp.ch; subjGPxCH += (s.absent ? 0 : cp.gp) * cp.ch;
+        y += rowH;
+      });
+      const finalG = s.absent ? 'ABS' : nebFinal(subjCH ? subjGPxCH / subjCH : 0);
+      const midY = blockTop + (comps.length * rowH - 9) / 2;
+      doc.font(bold).fontSize(8.5).fillColor('#111')
+        .text(String(idx + 1), xAt(0) + 3, midY, { width: cols[0].w - 6, align: 'center', lineBreak: false })
+        .text(finalG, xAt(5) + 3, midY, { width: cols[5].w - 6, align: 'center', lineBreak: false });
+    });
+  } else if (monthly) {
+    sheet.subjects.forEach((s, idx) => {
+      if (idx % 2 === 1) { doc.rect(L, y, tw, rowH).fill('#f5f7fb'); doc.fillColor('#111'); }
+      const remark = s.absent ? 'FAIL' : (s.pass ? 'PASS' : 'FAIL');
+      const vy = y + 7;
+      doc.font(bold).fontSize(12).fillColor('#111');
+      doc.text(String(idx + 1), xAt(0) + 3, vy, { width: cols[0].w - 6, align: 'center', lineBreak: false });
+      doc.text(s.subject, xAt(1) + 5, vy, { width: cols[1].w - 10, lineBreak: false, ellipsis: true });
+      doc.text(String(s.maxMarks), xAt(2) + 3, vy, { width: cols[2].w - 6, align: 'center', lineBreak: false });
+      doc.text(String(s.passMarks), xAt(3) + 3, vy, { width: cols[3].w - 6, align: 'center', lineBreak: false });
+      doc.text(s.absent ? 'ABS' : String(s.marks), xAt(4) + 3, vy, { width: cols[4].w - 6, align: 'center', lineBreak: false });
+      doc.fillColor(remark === 'PASS' ? '#16a34a' : '#dc2626').text(remark, xAt(5) + 3, vy, { width: cols[5].w - 6, align: 'center', lineBreak: false });
+      doc.fillColor('#111');
+      totMarks += s.absent ? 0 : s.marks; totMax += s.maxMarks;
+      y += rowH;
+    });
+  } else {
+    const dash = '—';
+    sheet.subjects.forEach((s, idx) => {
+      if (idx % 2 === 1) { doc.rect(L, y, tw, rowH).fill('#f5f7fb'); doc.fillColor('#111'); }
+      const th = s.absent ? dash : (s.theory != null ? String(s.theory) : dash);
+      const pr = s.practicalFull === 0 ? dash : (s.absent ? dash : (s.practical != null ? String(s.practical) : dash));
+      const remark = s.absent ? 'FAIL' : (s.pass ? 'PASS' : 'FAIL');
+      doc.font(reg).fontSize(8.5).fillColor('#111');
+      doc.text(String(idx + 1), xAt(0) + 3, y + 3.5, { width: cols[0].w - 6, align: 'center', lineBreak: false });
+      doc.text(s.subject, xAt(1) + 4, y + 3.5, { width: cols[1].w - 8, lineBreak: false, ellipsis: true });
+      doc.text(String(s.maxMarks), xAt(2) + 3, y + 3.5, { width: cols[2].w - 6, align: 'center', lineBreak: false });
+      doc.text(th, xAt(3) + 3, y + 3.5, { width: cols[3].w - 6, align: 'center', lineBreak: false });
+      doc.text(pr, xAt(4) + 3, y + 3.5, { width: cols[4].w - 6, align: 'center', lineBreak: false });
+      doc.font(bold).text(s.absent ? 'ABS' : String(s.marks), xAt(5) + 3, y + 3.5, { width: cols[5].w - 6, align: 'center', lineBreak: false });
+      doc.font(bold).fillColor(remark === 'PASS' ? '#16a34a' : '#dc2626')
+        .text(remark, xAt(6) + 3, y + 3.5, { width: cols[6].w - 6, align: 'center', lineBreak: false });
+      doc.fillColor('#111');
+      totMarks += s.absent ? 0 : s.marks; totMax += s.maxMarks;
+      y += rowH;
+    });
+  }
+  const bodyBottom = y;
+
+  // grid: outer box + column verticals + header underline
+  doc.save().lineWidth(0.8).strokeColor('#9aa1b0');
+  doc.rect(L, headTop, tw, bodyBottom - headTop).stroke();
+  for (let i = 1; i < cols.length; i++) doc.moveTo(xAt(i), headTop).lineTo(xAt(i), bodyBottom).stroke();
+  doc.moveTo(L, bodyTop).lineTo(R, bodyTop).stroke();
+  doc.restore();
+
+  // ---- summary ----
+  y = bodyBottom + 8;
+  if (kind === 'grade') {
+    const gpa = totalCH ? totalGPxCH / totalCH : 0;
+    doc.font(bold).fontSize(10).fillColor('#111')
+      .text(`Total Credit Hours: ${totalCH.toFixed(2)}`, L, y, { lineBreak: false })
+      .text(`Grade Point Average (GPA): ${gpa.toFixed(2)}`, L, y, { width: tw, align: 'right', lineBreak: false });
+  } else {
+    const pct = totMax ? Math.round((totMarks / totMax) * 10000) / 100 : 0;
+    doc.font(bold).fontSize(monthly ? 13 : 10).fillColor('#111')
+      .text(`Total Marks: ${totMarks} / ${totMax}`, L, y, { lineBreak: false })
+      .text(`Percentage: ${pct}%      Result: ${sheet.result}`, L, y, { width: tw, align: 'right', lineBreak: false });
+  }
+  y += 26;
+  let sigY: number;
+  if (monthly) {
+    sigY = H - 150; // monthly: no note/grading scale — sit signatures partway down the page
+  } else {
+  doc.font(reg).fontSize(7.5).fillColor('#555')
+    .text('Note: One credit hour equals 32 clock hours.    TH = Theory   PR = Practical   IN = Internal   ABS = Absent   NG = Non-Graded', L, y, { width: tw });
+
+  // ---- grading scale legend (two side-by-side parts) ----
+  const gsAll = [
+    ['90 and above', 'A+', '4.0', 'Outstanding'],
+    ['80 to below 90', 'A', '3.6', 'Excellent'],
+    ['70 to below 80', 'B+', '3.2', 'Very Good'],
+    ['60 to below 70', 'B', '2.8', 'Good'],
+    ['50 to below 60', 'C+', '2.4', 'Satisfactory'],
+    ['40 to below 50', 'C', '2.0', 'Acceptable'],
+    ['35 to below 40', 'D', '1.6', 'Basic'],
+    ['Below 35', 'NG', '—', 'Not Graded'],
+  ];
+  const gcols = [
+    { label: 'Achievement (%)', w: 90, align: 'left' as const },
+    { label: 'Grade', w: 34, align: 'center' as const },
+    { label: 'Grade Point', w: 50, align: 'center' as const },
+    { label: 'Description', w: 74, align: 'left' as const },
+  ];
+  const subW = gcols.reduce((a, c) => a + c.w, 0);
+  const gGap = 16;
+  const gsX0 = L + (tw - (subW * 2 + gGap)) / 2;
+  const gRowH = 13, gHeadH = 15, gTitleH = 16;
+  const gTitleY = y + 22;
+  doc.font(bold).fontSize(9.5).fillColor(BRAND).text('GRADING SCALE', L, gTitleY, { width: tw, align: 'center' });
+  const gTop = gTitleY + gTitleH;
+
+  const drawSub = (ox: number, rows: string[][]) => {
+    let gy = gTop;
+    doc.rect(ox, gy, subW, gHeadH).fill(BRAND);
+    doc.fillColor('white').font(bold).fontSize(6.8);
+    { let cx = ox; for (const c of gcols) { doc.text(c.label, cx + 3, gy + 4.5, { width: c.w - 6, align: c.align, lineBreak: false }); cx += c.w; } }
+    gy += gHeadH;
+    rows.forEach((row, i) => {
+      if (i % 2 === 1) { doc.rect(ox, gy, subW, gRowH).fill('#f5f7fb'); }
+      let cx = ox;
+      gcols.forEach((c, ci) => {
+        const boldCell = ci === 1 || ci === 2;
+        doc.font(boldCell ? bold : reg).fontSize(7.3).fillColor('#111').text(row[ci], cx + 3, gy + 3, { width: c.w - 6, align: c.align, lineBreak: false });
+        cx += c.w;
+      });
+      gy += gRowH;
+    });
+    doc.save().lineWidth(0.6).strokeColor('#9aa1b0');
+    doc.rect(ox, gTop, subW, gy - gTop).stroke();
+    { let vx = ox; for (let i = 0; i < gcols.length - 1; i++) { vx += gcols[i].w; doc.moveTo(vx, gTop).lineTo(vx, gy).stroke(); } }
+    doc.moveTo(ox, gTop + gHeadH).lineTo(ox + subW, gTop + gHeadH).stroke();
+    doc.restore();
+    return gy;
+  };
+  const gsBottom = drawSub(gsX0, gsAll.slice(0, 4));
+  drawSub(gsX0 + subW + gGap, gsAll.slice(4, 8));
+  sigY = gsBottom + 122;
+  }
+
+  // ---- signatures (Class Teacher + Principal, with the principal's signature centered on the line) ----
+  try {
+    const sw = 94; // rendered width of the 123×111 fit box (image aspect ~0.85)
+    doc.image(PRINCIPAL_SIGN_PATH, R - 60 - sw / 2, sigY - 100, { fit: [123, 111] });
+  } catch { /* signature optional */ }
+  doc.font(reg).fontSize(9.5).fillColor('#111');
+  doc.text('_____________________', L, sigY).text('Class Teacher', L, sigY + 14);
+  doc.text('_____________________', R - 180, sigY, { width: 180, align: 'right' }).text('Principal', R - 180, sigY + 14, { width: 180, align: 'right' });
+
+  doc.restore(); // end translate/scale
+}
+
+const EMPTY_EXTRA: NebExtra = { dob: null, fatherName: null, address: null, photoUrl: null };
+
+/** Fetch header extras (DOB, father's name, address, photo) for a set of students. */
+async function studentExtras(ids: number[]): Promise<Map<number, NebExtra>> {
+  const rows = await prisma.student.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, dob: true, address: true, photoUrl: true, parent: { select: { name: true } } },
+  });
+  return new Map(rows.map((e) => [e.id, { dob: e.dob || null, fatherName: e.parent?.name || null, address: e.address || null, photoUrl: e.photoUrl || null }]));
+}
+
+/** Individual NEB-style sheet, one A4 portrait page. */
 async function individualSheet(req: any, res: any, kind: 'marks' | 'grade') {
   const examId = Number(req.query.examId), studentId = Number(req.query.studentId);
   if (!examId || !studentId) throw new AppError(400, 'examId and studentId required');
   const school = await getSchool();
   const sheet = await buildSheet(examId, studentId);
   if (!sheet) throw new AppError(404, 'Not found');
-  const file = `${kind === 'marks' ? 'marksheet' : 'gradesheet'}-${sheet.student.iemis || sheet.student.admissionNo}.pdf`;
-  streamPdf(res, file, (doc) => {
-    drawExamSheet(doc, 0, 0, doc.page.width, doc.page.height, kind, sheet, school);
-  }, { size: 'A4', margin: 0 });
+  const exam = await prisma.exam.findUnique({ where: { id: examId }, select: { examType: true } });
+  const monthly = exam?.examType === 'MONTHLY';
+  if (monthly && kind === 'grade') throw new AppError(400, 'Monthly test has no grade sheet');
+  const extra = (await studentExtras([studentId])).get(studentId) || EMPTY_EXTRA;
+  if (monthly) {
+    // monthly marks sheet — NEB format scaled to a half-A4 panel (2-per-A4 landscape)
+    const file = `marksheet-${sheet.student.iemis || sheet.student.admissionNo}.pdf`;
+    streamPdf(res, file, (doc) => {
+      const halfW = doc.page.width / 2, H = doc.page.height, s = H / 841.89;
+      doc.save().dash(3, { space: 3 }).lineWidth(0.6).strokeColor('#bbbbbb').moveTo(halfW, 16).lineTo(halfW, H - 16).stroke().undash().restore();
+      drawNebSheet(doc, sheet, school, extra, 'monthly', { ox: 0, oy: 0, scale: s });
+    }, { size: 'A4', margin: 0, layout: 'landscape' });
+    return;
+  }
+  const file = `${kind === 'grade' ? 'gradesheet' : 'marksheet'}-${sheet.student.iemis || sheet.student.admissionNo}.pdf`;
+  streamPdf(res, file, (doc) => drawNebSheet(doc, sheet, school, extra, kind), { size: 'A4', margin: 0 });
 }
 router.get('/marksheet', asyncHandler((req, res) => individualSheet(req, res, 'marks')));
 router.get('/gradesheet', asyncHandler((req, res) => individualSheet(req, res, 'grade')));
 
-/** Whole class, 2 students per A4 landscape sheet (left/right halves). */
+/** Whole class — one NEB-style A4 page per student. */
 async function classSheets(req: any, res: any, kind: 'marks' | 'grade') {
   const examId = Number(req.query.examId), classId = Number(req.query.classId);
   if (!examId || !classId) throw new AppError(400, 'examId and classId required');
   const school = await getSchool();
   const sheets = (await buildClassSheets(examId, classId)).filter((s) => s.subjects.length);
   if (!sheets.length) throw new AppError(404, 'No results entered for this class');
+  const exam = await prisma.exam.findUnique({ where: { id: examId }, select: { examType: true } });
+  const monthly = exam?.examType === 'MONTHLY';
+  if (monthly && kind === 'grade') throw new AppError(400, 'Monthly test has no grade sheet');
+  const exMap = await studentExtras(sheets.map((s) => s.student.id));
+  if (monthly) {
+    // monthly class marks sheet — NEB format, 2 students per A4 (landscape, left/right)
+    const file = `class-marksheet-${sheets.length}.pdf`;
+    streamPdf(res, file, (doc) => {
+      const halfW = doc.page.width / 2, H = doc.page.height, s = H / 841.89;
+      for (let p = 0; p * 2 < sheets.length; p++) {
+        if (p > 0) doc.addPage();
+        doc.save().dash(3, { space: 3 }).lineWidth(0.6).strokeColor('#bbbbbb').moveTo(halfW, 16).lineTo(halfW, H - 16).stroke().undash().restore();
+        sheets.slice(p * 2, p * 2 + 2).forEach((sh, slot) => drawNebSheet(doc, sh, school, exMap.get(sh.student.id) || EMPTY_EXTRA, 'monthly', { ox: slot * halfW, oy: 0, scale: s }));
+      }
+    }, { size: 'A4', margin: 0, layout: 'landscape' });
+    return;
+  }
   const file = `class-${kind === 'marks' ? 'marksheet' : 'gradesheet'}-${sheets.length}.pdf`;
   streamPdf(res, file, (doc) => {
-    const W = doc.page.width, H = doc.page.height, halfW = W / 2;
-    for (let p = 0; p * 2 < sheets.length; p++) {
-      if (p > 0) doc.addPage();
-      doc.save().dash(3, { space: 3 }).lineWidth(0.6).strokeColor('#bbbbbb').moveTo(halfW, 16).lineTo(halfW, H - 16).stroke().undash().restore();
-      sheets.slice(p * 2, p * 2 + 2).forEach((s, slot) => drawExamSheet(doc, slot * halfW, 0, halfW, H, kind, s, school));
-    }
-  }, { size: 'A4', margin: 0, layout: 'landscape' });
+    sheets.forEach((s, i) => {
+      if (i > 0) doc.addPage();
+      drawNebSheet(doc, s, school, exMap.get(s.student.id) || EMPTY_EXTRA, kind);
+    });
+  }, { size: 'A4', margin: 0 });
 }
 router.get('/class-marksheet', asyncHandler((req, res) => classSheets(req, res, 'marks')));
 router.get('/class-gradesheet', asyncHandler((req, res) => classSheets(req, res, 'grade')));

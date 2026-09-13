@@ -362,7 +362,7 @@ router.post('/', requireRole('ADMIN'), asyncHandler(async (req, res) => {
 /** POST /api/fees/:id/pay (ADMIN) — record a payment, recompute status */
 router.post('/:id/pay', requireRole('ADMIN'), asyncHandler(async (req, res) => {
   const id = intParam(req.params.id);
-  const { amount, method, reference, less } = req.body || {};
+  const { amount, method, reference, less, manualReceiptNo } = req.body || {};
   const inv = await prisma.feeInvoice.findUnique({ where: { id }, include: { items: true, payments: true } });
   if (!inv) throw new AppError(404, 'Invoice not found');
   const pay = Number(amount || 0);
@@ -370,17 +370,18 @@ router.post('/:id/pay', requireRole('ADMIN'), asyncHandler(async (req, res) => {
   if ((!pay || pay <= 0) && lessAmt <= 0) throw new AppError(400, 'Enter a payment amount or a concession');
 
   const receiptNo = 'RCPT' + Date.now().toString().slice(-8) + Math.floor(Math.random() * 90 + 10);
+  const manualNo = typeof manualReceiptNo === 'string' && manualReceiptNo.trim() ? manualReceiptNo.trim() : null;
   const { total, settled } = invoiceTotals(inv);
   const newStatus = statusFor(total, settled + pay + lessAmt);
 
   const [payment] = await prisma.$transaction([
     prisma.payment.create({
-      data: { invoiceId: id, amount: pay, less: lessAmt, method: method || 'CASH', reference: reference || null, receiptNo, receivedById: req.user!.id },
+      data: { invoiceId: id, amount: pay, less: lessAmt, method: method || 'CASH', reference: reference || null, receiptNo, manualReceiptNo: manualNo, receivedById: req.user!.id },
     }),
     prisma.feeInvoice.update({ where: { id }, data: { status: newStatus } }),
   ]);
   const { year } = await getBillingPeriod();
-  const displayNo = serialNo((await buildSerialMap()).get(inv.studentId), year);
+  const displayNo = manualNo || serialNo((await buildSerialMap()).get(inv.studentId), year);
   res.json({ ok: true, receiptNo: displayNo, paymentId: payment.id, status: newStatus });
 }));
 

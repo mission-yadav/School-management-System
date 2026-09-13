@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Trash2 } from 'lucide-react';
 import api, { apiError } from '@/lib/api';
 import { useFetch } from '@/lib/useFetch';
 import { usePdfViewer } from '@/components/PdfViewer';
@@ -13,22 +14,31 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { useToast } from '@/components/ui/toast';
 import { formatBS } from '@/lib/nepaliDate';
 
+const EXAM_TYPES = [
+  { value: 'TERMINAL_1', label: '1st Terminal Exam' },
+  { value: 'TERMINAL_2', label: '2nd Terminal Exam' },
+  { value: 'TERMINAL_3', label: '3rd Terminal Exam' },
+  { value: 'FINAL', label: 'Final Exam' },
+  { value: 'MONTHLY', label: 'Monthly Test' },
+];
+const examTypeLabel = (v: string) => EXAM_TYPES.find((t) => t.value === v)?.label || v;
+
 export default function Exams() {
   const toast = useToast();
   const openPdf = usePdfViewer();
 
   // ---- Exams tab ----
   const exams = useFetch<any[]>('/exams');
-  const [form, setForm] = useState({ name: '', term: '', sessionLabel: '' });
+  const [form, setForm] = useState({ name: '', term: '', sessionLabel: '', examType: 'TERMINAL_1' });
   const [creating, setCreating] = useState(false);
 
   async function createExam() {
     if (!form.name.trim()) return;
     setCreating(true);
     try {
-      await api.post('/exams', { name: form.name, term: form.term, sessionLabel: form.sessionLabel });
+      await api.post('/exams', { name: form.name, term: form.term, sessionLabel: form.sessionLabel, examType: form.examType });
       toast.success('Exam created');
-      setForm({ name: '', term: '', sessionLabel: '' });
+      setForm({ name: '', term: '', sessionLabel: '', examType: 'TERMINAL_1' });
       exams.refetch();
     } catch (e) {
       toast.error(apiError(e));
@@ -50,6 +60,7 @@ export default function Exams() {
 
   const examColumns: Column<any>[] = [
     { header: 'Name', accessor: (r) => r.name },
+    { header: 'Type', accessor: (r) => examTypeLabel(r.examType) },
     { header: 'Term', accessor: (r) => r.term },
     { header: '#Results', accessor: (r) => r._count?.results ?? 0 },
     { header: 'Created', accessor: (r) => formatBS(r.createdAt) },
@@ -66,6 +77,7 @@ export default function Exams() {
   const [meRows, setMeRows] = useState<any[]>([]); // { subjectId, subjectName, marks, maxMarks }
   const [meLoading, setMeLoading] = useState(false);
   const [meSaving, setMeSaving] = useState(false);
+  const meMonthly = (exams.data || []).find((x) => String(x.id) === meExamId)?.examType === 'MONTHLY';
 
   useEffect(() => { setMeStudentId(''); }, [meClassId]);
 
@@ -73,7 +85,7 @@ export default function Exams() {
     if (!meExamId || !meClassId || !meStudentId) { setMeRows([]); return; }
     let active = true; setMeLoading(true);
     api.get(`/exams/${meExamId}/entry?classId=${meClassId}&studentId=${meStudentId}`)
-      .then((res) => { if (active) setMeRows((res.data || []).map((r: any) => ({ ...r, marks: r.marks == null ? '' : String(r.marks), maxMarks: String(r.maxMarks ?? 100) }))); })
+      .then((res) => { if (active) setMeRows((res.data || []).map((r: any) => ({ ...r, theory: r.theory == null ? '' : String(r.theory), practical: r.practical == null ? '' : String(r.practical), obtained: r.obtained == null ? '' : String(r.obtained) }))); })
       .catch((e) => { if (active) toast.error(apiError(e)); })
       .finally(() => { if (active) setMeLoading(false); });
     return () => { active = false; };
@@ -87,7 +99,9 @@ export default function Exams() {
     try {
       await api.post(`/exams/${meExamId}/entry`, {
         studentId: Number(meStudentId),
-        records: meRows.map((r) => ({ subjectId: r.subjectId, marks: r.marks === '' ? '' : Number(r.marks), maxMarks: Number(r.maxMarks || 100) })),
+        records: meRows.map((r) => meMonthly
+          ? ({ subjectId: r.subjectId, obtained: r.obtained === '' ? '' : Number(r.obtained), absent: !!r.absent })
+          : ({ subjectId: r.subjectId, theory: r.theory === '' ? '' : Number(r.theory), practical: r.practical === '' ? '' : Number(r.practical), absent: !!r.absent })),
       });
       toast.success('Marks saved');
     } catch (e) {
@@ -104,6 +118,8 @@ export default function Exams() {
   const [rlClassId, setRlClassId] = useState('');
   const [rlRows, setRlRows] = useState<any[]>([]);
   const [rlLoading, setRlLoading] = useState(false);
+  const [rlNonce, setRlNonce] = useState(0);
+  const rlMonthly = (exams.data || []).find((x) => String(x.id) === rlExamId)?.examType === 'MONTHLY';
 
   useEffect(() => {
     if (!rlExamId || !rlClassId) { setRlRows([]); return; }
@@ -113,7 +129,16 @@ export default function Exams() {
       .catch((e) => { if (active) toast.error(apiError(e)); })
       .finally(() => { if (active) setRlLoading(false); });
     return () => { active = false; };
-  }, [rlExamId, rlClassId]);
+  }, [rlExamId, rlClassId, rlNonce]);
+
+  async function resetStudentMarks(r: any) {
+    if (!confirm(`Reset ${r.name}'s marks for this exam? This clears all their entered marks and removes them from the list.`)) return;
+    try {
+      await api.delete(`/exams/${rlExamId}/entry/${r.studentId}`);
+      toast.success(`${r.name}'s marks reset`);
+      setRlNonce((n) => n + 1);
+    } catch (e) { toast.error(apiError(e)); }
+  }
 
   const rankColumns: Column<any>[] = [
     { header: 'Rank', accessor: (r) => r.rank },
@@ -128,7 +153,8 @@ export default function Exams() {
       accessor: (r) => (
         <div className="flex gap-1">
           <Button size="sm" variant="outline" onClick={() => openPdf({ url: `/pdf/marksheet?examId=${rlExamId}&studentId=${r.studentId}`, filename: `marksheet-${r.name}.pdf`, title: `Marks Sheet — ${r.name}` })}>Marks</Button>
-          <Button size="sm" variant="outline" onClick={() => openPdf({ url: `/pdf/gradesheet?examId=${rlExamId}&studentId=${r.studentId}`, filename: `gradesheet-${r.name}.pdf`, title: `Grade Sheet — ${r.name}` })}>Grade</Button>
+          {!rlMonthly && <Button size="sm" variant="outline" onClick={() => openPdf({ url: `/pdf/gradesheet?examId=${rlExamId}&studentId=${r.studentId}`, filename: `gradesheet-${r.name}.pdf`, title: `Grade Sheet — ${r.name}` })}>Grade</Button>}
+          <Button size="sm" variant="ghost" title="Reset this student's marks" onClick={() => resetStudentMarks(r)}><Trash2 className="size-4 text-red-500" /></Button>
         </div>
       ),
     },
@@ -164,7 +190,12 @@ export default function Exams() {
             <Card className="md:col-span-1">
               <CardHeader><CardTitle>Create Exam</CardTitle></CardHeader>
               <CardContent className="space-y-3">
-                <Field label="Name"><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="First Terminal Exam" /></Field>
+                <Field label="Exam Type">
+                  <Select value={form.examType} onChange={(e) => setForm({ ...form, examType: e.target.value })}>
+                    {EXAM_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+                  </Select>
+                </Field>
+                <Field label="Name"><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. First Terminal Exam" /></Field>
                 <Field label="Term"><Input value={form.term} onChange={(e) => setForm({ ...form, term: e.target.value })} placeholder="Term 1" /></Field>
                 <Field label="Session"><Input value={form.sessionLabel} onChange={(e) => setForm({ ...form, sessionLabel: e.target.value })} placeholder="2082-83" /></Field>
                 <Button onClick={createExam} disabled={creating || !form.name.trim()}>{creating ? 'Creating…' : 'Create Exam'}</Button>
@@ -205,22 +236,56 @@ export default function Exams() {
                 <EmptyState title="No subjects for this class" description="Add subjects for this class on the Subjects page first." />
               ) : (
                 <>
+                  {meMonthly ? (
+                    <Table>
+                      <THead><TR><TH>Subject</TH><TH>Obtained</TH><TH>Absent</TH></TR></THead>
+                      <TBody>
+                        {meRows.map((r, i) => (
+                          <TR key={r.subjectId}>
+                            <TD>{r.subjectName} <span className="text-xs text-slate-400">/{r.maxMarks}</span></TD>
+                            <TD><Input type="number" value={r.absent ? '' : r.obtained} disabled={!!r.absent} onChange={(e) => setRow(i, { obtained: e.target.value })} className="w-24" placeholder={r.absent ? 'ABS' : `/${r.maxMarks}`} /></TD>
+                            <TD>
+                              <input type="checkbox" className="size-4 accent-[#262081]" checked={!!r.absent}
+                                onChange={(e) => setRow(i, e.target.checked ? { absent: true, obtained: '' } : { absent: false })} />
+                            </TD>
+                          </TR>
+                        ))}
+                      </TBody>
+                    </Table>
+                  ) : (
                   <Table>
-                    <THead><TR><TH>Subject</TH><TH>Full Marks</TH><TH>Obtained</TH></TR></THead>
+                    <THead><TR><TH>Subject</TH><TH>Theory</TH><TH>Practical</TH><TH>Total</TH><TH>Absent</TH></TR></THead>
                     <TBody>
-                      {meRows.map((r, i) => (
-                        <TR key={r.subjectId}>
-                          <TD>{r.subjectName}</TD>
-                          <TD><Input type="number" value={r.maxMarks} onChange={(e) => setRow(i, { maxMarks: e.target.value })} className="w-24" /></TD>
-                          <TD><Input type="number" value={r.marks} onChange={(e) => setRow(i, { marks: e.target.value })} className="w-24" placeholder="—" /></TD>
-                        </TR>
-                      ))}
+                      {meRows.map((r, i) => {
+                        const hasPr = Number(r.practicalFull) > 0;
+                        const full = Number(r.theoryFull || 0) + Number(r.practicalFull || 0);
+                        const total = r.absent ? 0 : Number(r.theory || 0) + (hasPr ? Number(r.practical || 0) : 0);
+                        return (
+                          <TR key={r.subjectId}>
+                            <TD>{r.subjectName} <span className="text-xs text-slate-400">/{full}</span></TD>
+                            <TD><Input type="number" value={r.absent ? '' : r.theory} disabled={!!r.absent} onChange={(e) => setRow(i, { theory: e.target.value })} className="w-20" placeholder={r.absent ? 'ABS' : `/${r.theoryFull}`} /></TD>
+                            <TD>{hasPr
+                              ? <Input type="number" value={r.absent ? '' : r.practical} disabled={!!r.absent} onChange={(e) => setRow(i, { practical: e.target.value })} className="w-20" placeholder={r.absent ? 'ABS' : `/${r.practicalFull}`} />
+                              : <span className="text-slate-400">—</span>}</TD>
+                            <TD className="font-medium">{r.absent ? '—' : total}</TD>
+                            <TD>
+                              <input
+                                type="checkbox"
+                                className="size-4 accent-[#262081]"
+                                checked={!!r.absent}
+                                onChange={(e) => setRow(i, e.target.checked ? { absent: true, theory: '', practical: '' } : { absent: false })}
+                              />
+                            </TD>
+                          </TR>
+                        );
+                      })}
                     </TBody>
                   </Table>
+                  )}
                   <div className="flex flex-wrap items-center gap-2">
                     <Button onClick={saveStudentMarks} disabled={meSaving}>{meSaving ? 'Saving…' : 'Save Marks'}</Button>
                     <Button variant="outline" onClick={() => openPdf({ url: `/pdf/marksheet?examId=${meExamId}&studentId=${meStudentId}`, filename: `marksheet-${meStudentName}.pdf`, title: `Marks Sheet — ${meStudentName}` })}>Marks Sheet</Button>
-                    <Button variant="outline" onClick={() => openPdf({ url: `/pdf/gradesheet?examId=${meExamId}&studentId=${meStudentId}`, filename: `gradesheet-${meStudentName}.pdf`, title: `Grade Sheet — ${meStudentName}` })}>Grade Sheet</Button>
+                    {!meMonthly && <Button variant="outline" onClick={() => openPdf({ url: `/pdf/gradesheet?examId=${meExamId}&studentId=${meStudentId}`, filename: `gradesheet-${meStudentName}.pdf`, title: `Grade Sheet — ${meStudentName}` })}>Grade Sheet</Button>}
                   </div>
                 </>
               )}
@@ -241,8 +306,8 @@ export default function Exams() {
               {rlExamId && rlClassId && (
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-sm text-slate-500">Whole class (2 per A4 landscape):</span>
-                  <Button variant="outline" onClick={() => openPdf({ url: `/pdf/class-marksheet?examId=${rlExamId}&classId=${rlClassId}`, filename: 'class-marksheet.pdf', title: 'Class Marks Sheet (2 per page)' })}>Class Marks Sheet</Button>
-                  <Button variant="outline" onClick={() => openPdf({ url: `/pdf/class-gradesheet?examId=${rlExamId}&classId=${rlClassId}`, filename: 'class-gradesheet.pdf', title: 'Class Grade Sheet (2 per page)' })}>Class Grade Sheet</Button>
+                  <Button variant="outline" onClick={() => openPdf({ url: `/pdf/class-marksheet?examId=${rlExamId}&classId=${rlClassId}`, filename: 'class-marksheet.pdf', title: 'Class Marks Sheet' })}>Class Marks Sheet</Button>
+                  {!rlMonthly && <Button variant="outline" onClick={() => openPdf({ url: `/pdf/class-gradesheet?examId=${rlExamId}&classId=${rlClassId}`, filename: 'class-gradesheet.pdf', title: 'Class Grade Sheet' })}>Class Grade Sheet</Button>}
                 </div>
               )}
 

@@ -39,8 +39,8 @@ export default function Login() {
         </div>
 
         <form onSubmit={onSubmit} className="space-y-4">
-          <Field label="Email">
-            <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+          <Field label="Username">
+            <Input type="text" autoCapitalize="none" autoCorrect="off" spellCheck={false} value={email} onChange={(e) => setEmail(e.target.value)} required />
           </Field>
           <Field label="Password">
             <div className="relative">
