@@ -2,7 +2,7 @@ import { Router } from 'express';
 import prisma from '../prisma.js';
 import { authRequired, requireRole } from '../middleware/auth.js';
 import { asyncHandler, AppError, intParam } from '../lib/http.js';
-import { ensureLedger, ensureAllLedgers, syncClassLedgers, currentBS, getBillingPeriod, setBillingPeriod, advanceBillingPeriod, revertBillingPeriod, canRevertBilling, nextPeriod, previousPeriod, BS_MONTHS, buildSerialMap, serialNo } from '../lib/ledger.js';
+import { ensureLedger, ensureAllLedgers, syncClassLedgers, currentBS, getBillingPeriod, setBillingPeriod, advanceBillingPeriod, revertBillingPeriod, canRevertBilling, nextPeriod, previousPeriod, BS_MONTHS, buildSerialMap, serialNo, addMonthlyExamFee } from '../lib/ledger.js';
 
 const router = Router();
 router.use(authRequired);
@@ -105,8 +105,9 @@ function componentsOf(items: { description: string; amount: number; bsMonth?: nu
   for (const f of FEE_ORDER) out[f.key] = 0;
   for (const it of items) {
     if (it.description === 'Previous Dues') continue; // carried forward, not monthly tuition
-    if (it.bsMonth) { // dated monthly lines: Computer Fee has its own column, everything else is tuition
+    if (it.bsMonth) { // dated monthly lines: Computer/Exam have their own columns, everything else is tuition
       if (it.description.endsWith('Computer Fee')) out.computerFee += it.amount;
+      else if (it.description.endsWith('Exam Fee')) out.examFee += it.amount;
       else out.monthlyTuition += it.amount;
       continue;
     }
@@ -230,7 +231,11 @@ router.get('/ledger/:studentId', requireRole('ADMIN'), asyncHandler(async (req, 
 
   const monthly = inv.items.filter((i) => i.bsMonth)
     .sort((a, b) => (a.bsYear! - b.bsYear!) || (a.bsMonth! - b.bsMonth!))
-    .map((i) => ({ id: i.id, label: i.description === 'Previous Dues' ? 'Previous Dues' : `${BS_MONTHS[i.bsMonth! - 1]} ${i.bsYear}`, bsYear: i.bsYear, bsMonth: i.bsMonth, amount: i.amount, description: i.description }));
+    .map((i) => {
+      const suffix = i.description.endsWith('Exam Fee') ? ' Exam Fee' : i.description.endsWith('Computer Fee') ? ' Computer Fee' : '';
+      const label = i.description === 'Previous Dues' ? 'Previous Dues' : `${BS_MONTHS[i.bsMonth! - 1]} ${i.bsYear}${suffix}`;
+      return { id: i.id, label, bsYear: i.bsYear, bsMonth: i.bsMonth, amount: i.amount, description: i.description };
+    });
   const headings = inv.items.filter((i) => !i.bsMonth)
     .map((i) => ({ id: i.id, label: i.description === 'Annual Charge' && i.bsYear ? `Annual Charge ${i.bsYear}` : i.description, amount: i.amount, description: i.description, bsYear: i.bsYear }));
 
@@ -307,11 +312,16 @@ router.get('/billing-period', requireRole('ADMIN'), asyncHandler(async (_req, re
   res.json(await periodResponse(await getBillingPeriod()));
 }));
 
-/** POST /api/fees/billing-period/advance — move to the next month and apply its charges to all ledgers. */
-router.post('/billing-period/advance', requireRole('ADMIN'), asyncHandler(async (_req, res) => {
+/** POST /api/fees/billing-period/advance — move to the next month and apply its charges to all
+ *  ledgers. Optional body { examFee } adds a per-month exam-fee line to every student for the new
+ *  month (opt-in from the confirmation box); omit or 0 to skip. */
+router.post('/billing-period/advance', requireRole('ADMIN'), asyncHandler(async (req, res) => {
   const p = await advanceBillingPeriod();
   await ensureAllLedgers();
-  res.json(await periodResponse(p));
+  const raw = req.body?.examFee;
+  const amt = raw == null || raw === '' ? 0 : Number(raw);
+  const examAdded = Number.isFinite(amt) && amt > 0 ? await addMonthlyExamFee(p, amt) : 0;
+  res.json({ ...(await periodResponse(p)), examAdded });
 }));
 
 /** POST /api/fees/billing-period/revert — step back one month, removing that month's charges from all ledgers. */

@@ -36,11 +36,18 @@ export function bySubjectPriority(a: string, b: string): number {
 export type SubjectRow = { subject: string; marks: number; maxMarks: number; passMarks: number; grade: string; gpa: number; pass: boolean; absent: boolean; theory: number | null; practical: number | null; theoryFull: number; practicalFull: number };
 export type Sheet = {
   student: { id: number; name: string; rollNo: string | null; admissionNo: string; iemis: string | null; className: string | null };
-  exam: { name: string; examType: string; term: string | null; sessionLabel: string | null } | null;
+  exam: { name: string; examType: string; term: string | null; sessionLabel: string | null; totalWorkingDays: number | null } | null;
   subjects: SubjectRow[];
   total: number; max: number; percent: number; gpa: number; grade: string; result: 'PASS' | 'FAIL';
+  attendance: { present: number | null; total: number | null; pass: boolean };
   rank: number; classSize: number;
 };
+
+/** Attendance passes at ≥ 75% of the exam's total working days. */
+export function attendancePass(present: number | null, total: number | null): boolean {
+  if (present == null || !total) return true; // no data → don't flag as failing
+  return present / total >= 0.75;
+}
 
 /** NEB 4.0 grading scale (per component, from percentage). */
 export function nebScale(pct: number): { grade: string; gp: number } {
@@ -116,14 +123,20 @@ export async function buildClassSheets(examId: number, classId: number): Promise
   const byStudent = new Map<number, any[]>();
   for (const r of results) { const a = byStudent.get(r.studentId) || []; a.push(r); byStudent.set(r.studentId, a); }
   const passPercent = exam?.examType === 'MONTHLY' ? 0.4 : 0.35; // monthly test passes at 40%
+  const totalDays = exam?.totalWorkingDays ?? null;
+  const attRows = await prisma.examAttendance.findMany({ where: { examId, student: { classId } } });
+  const attByStudent = new Map<number, number>(attRows.map((a) => [a.studentId, a.presentDays]));
 
   const sheets: Sheet[] = students.map((s) => {
     const subjects = computeSubjects(byStudent.get(s.id) || [], passPercent);
     const sum = summarize(subjects);
+    const present = attByStudent.has(s.id) ? attByStudent.get(s.id)! : null;
     return {
       student: { id: s.id, name: s.name, rollNo: s.rollNo, admissionNo: s.admissionNo, iemis: s.iemis, className: s.class?.name || null },
-      exam: exam ? { name: exam.name, examType: exam.examType, term: exam.term, sessionLabel: exam.sessionLabel } : null,
-      subjects, ...sum, rank: 0, classSize: students.length,
+      exam: exam ? { name: exam.name, examType: exam.examType, term: exam.term, sessionLabel: exam.sessionLabel, totalWorkingDays: totalDays } : null,
+      subjects, ...sum,
+      attendance: { present, total: totalDays, pass: attendancePass(present, totalDays) },
+      rank: 0, classSize: students.length,
     };
   });
   // rank by percentage among students who actually have marks

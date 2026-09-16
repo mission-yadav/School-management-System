@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Input, Field } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
+import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { Badge, statusVariant } from '@/components/ui/badge';
 import { DataTable, type Column, Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
@@ -29,21 +30,54 @@ export default function Exams() {
 
   // ---- Exams tab ----
   const exams = useFetch<any[]>('/exams');
-  const [form, setForm] = useState({ name: '', term: '', sessionLabel: '', examType: 'TERMINAL_1' });
+  const [form, setForm] = useState({ name: '', term: '', sessionLabel: '', examType: 'TERMINAL_1', totalWorkingDays: '' });
   const [creating, setCreating] = useState(false);
 
   async function createExam() {
     if (!form.name.trim()) return;
     setCreating(true);
     try {
-      await api.post('/exams', { name: form.name, term: form.term, sessionLabel: form.sessionLabel, examType: form.examType });
+      await api.post('/exams', { name: form.name, term: form.term, sessionLabel: form.sessionLabel, examType: form.examType, totalWorkingDays: form.totalWorkingDays });
       toast.success('Exam created');
-      setForm({ name: '', term: '', sessionLabel: '', examType: 'TERMINAL_1' });
+      setForm({ name: '', term: '', sessionLabel: '', examType: 'TERMINAL_1', totalWorkingDays: '' });
       exams.refetch();
     } catch (e) {
       toast.error(apiError(e));
     } finally {
       setCreating(false);
+    }
+  }
+
+  // ---- Edit exam ----
+  const [editExam, setEditExam] = useState<any>(null);
+  const [editForm, setEditForm] = useState({ name: '', examType: 'TERMINAL_1', term: '', sessionLabel: '', totalWorkingDays: '' });
+  const [savingEdit, setSavingEdit] = useState(false);
+
+  function openEditExam(r: any) {
+    setEditForm({
+      name: r.name || '', examType: r.examType || 'TERMINAL_1', term: r.term || '',
+      sessionLabel: r.sessionLabel || '', totalWorkingDays: r.totalWorkingDays != null ? String(r.totalWorkingDays) : '',
+    });
+    setEditExam(r);
+  }
+
+  async function saveEditExam() {
+    if (!editExam) return;
+    if (!editForm.name.trim()) { toast.error('Name is required'); return; }
+    if (!confirm('Save changes to this exam?')) return;
+    setSavingEdit(true);
+    try {
+      await api.patch(`/exams/${editExam.id}`, {
+        name: editForm.name, examType: editForm.examType, term: editForm.term,
+        sessionLabel: editForm.sessionLabel, totalWorkingDays: editForm.totalWorkingDays,
+      });
+      toast.success('Exam updated');
+      setEditExam(null);
+      exams.refetch();
+    } catch (e) {
+      toast.error(apiError(e));
+    } finally {
+      setSavingEdit(false);
     }
   }
 
@@ -62,9 +96,18 @@ export default function Exams() {
     { header: 'Name', accessor: (r) => r.name },
     { header: 'Type', accessor: (r) => examTypeLabel(r.examType) },
     { header: 'Term', accessor: (r) => r.term },
+    { header: 'Work. Days', accessor: (r) => r.totalWorkingDays ?? '—' },
     { header: '#Results', accessor: (r) => r._count?.results ?? 0 },
     { header: 'Created', accessor: (r) => formatBS(r.createdAt) },
-    { header: '', accessor: (r) => <Button variant="destructive" size="sm" onClick={() => deleteExam(r.id)}>Delete</Button> },
+    {
+      header: '',
+      accessor: (r) => (
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" size="sm" onClick={() => openEditExam(r)}>Edit</Button>
+          <Button variant="destructive" size="sm" onClick={() => deleteExam(r.id)}>Delete</Button>
+        </div>
+      ),
+    },
   ];
 
   const classes = useFetch<any[]>('/classes');
@@ -75,6 +118,8 @@ export default function Exams() {
   const [meStudentId, setMeStudentId] = useState('');
   const meStudents = useFetch<any[]>(meClassId ? `/classes/${meClassId}/students` : null);
   const [meRows, setMeRows] = useState<any[]>([]); // { subjectId, subjectName, marks, maxMarks }
+  const [mePresent, setMePresent] = useState(''); // attendance: present days
+  const [meTotalDays, setMeTotalDays] = useState<number | null>(null);
   const [meLoading, setMeLoading] = useState(false);
   const [meSaving, setMeSaving] = useState(false);
   const meMonthly = (exams.data || []).find((x) => String(x.id) === meExamId)?.examType === 'MONTHLY';
@@ -82,10 +127,18 @@ export default function Exams() {
   useEffect(() => { setMeStudentId(''); }, [meClassId]);
 
   useEffect(() => {
-    if (!meExamId || !meClassId || !meStudentId) { setMeRows([]); return; }
+    if (!meExamId || !meClassId || !meStudentId) { setMeRows([]); setMePresent(''); setMeTotalDays(null); return; }
     let active = true; setMeLoading(true);
-    api.get(`/exams/${meExamId}/entry?classId=${meClassId}&studentId=${meStudentId}`)
-      .then((res) => { if (active) setMeRows((res.data || []).map((r: any) => ({ ...r, theory: r.theory == null ? '' : String(r.theory), practical: r.practical == null ? '' : String(r.practical), obtained: r.obtained == null ? '' : String(r.obtained) }))); })
+    Promise.all([
+      api.get(`/exams/${meExamId}/entry?classId=${meClassId}&studentId=${meStudentId}`),
+      api.get(`/exams/${meExamId}/attendance?studentId=${meStudentId}`),
+    ])
+      .then(([res, att]) => {
+        if (!active) return;
+        setMeRows((res.data || []).map((r: any) => ({ ...r, theory: r.theory == null ? '' : String(r.theory), practical: r.practical == null ? '' : String(r.practical), obtained: r.obtained == null ? '' : String(r.obtained) })));
+        setMePresent(att.data?.present == null ? '' : String(att.data.present));
+        setMeTotalDays(att.data?.totalWorkingDays ?? null);
+      })
       .catch((e) => { if (active) toast.error(apiError(e)); })
       .finally(() => { if (active) setMeLoading(false); });
     return () => { active = false; };
@@ -99,6 +152,7 @@ export default function Exams() {
     try {
       await api.post(`/exams/${meExamId}/entry`, {
         studentId: Number(meStudentId),
+        presentDays: mePresent === '' ? '' : Number(mePresent),
         records: meRows.map((r) => meMonthly
           ? ({ subjectId: r.subjectId, obtained: r.obtained === '' ? '' : Number(r.obtained), absent: !!r.absent })
           : ({ subjectId: r.subjectId, theory: r.theory === '' ? '' : Number(r.theory), practical: r.practical === '' ? '' : Number(r.practical), absent: !!r.absent })),
@@ -198,6 +252,7 @@ export default function Exams() {
                 <Field label="Name"><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. First Terminal Exam" /></Field>
                 <Field label="Term"><Input value={form.term} onChange={(e) => setForm({ ...form, term: e.target.value })} placeholder="Term 1" /></Field>
                 <Field label="Session"><Input value={form.sessionLabel} onChange={(e) => setForm({ ...form, sessionLabel: e.target.value })} placeholder="2082-83" /></Field>
+                <Field label="Total Working Days"><Input type="number" value={form.totalWorkingDays} onChange={(e) => setForm({ ...form, totalWorkingDays: e.target.value })} placeholder="e.g. 56" /></Field>
                 <Button onClick={createExam} disabled={creating || !form.name.trim()}>{creating ? 'Creating…' : 'Create Exam'}</Button>
               </CardContent>
             </Card>
@@ -282,6 +337,16 @@ export default function Exams() {
                     </TBody>
                   </Table>
                   )}
+                  <div className="flex flex-wrap items-end gap-3 border-t border-slate-200 pt-3">
+                    <Field label={`Attendance — present days${meTotalDays != null ? ` (out of ${meTotalDays})` : ''}`}>
+                      <Input type="number" value={mePresent} onChange={(e) => setMePresent(e.target.value)} className="w-32"
+                        placeholder={meTotalDays != null ? `/ ${meTotalDays}` : 'present days'} />
+                    </Field>
+                    {meTotalDays == null && <span className="pb-2 text-xs text-amber-600">Set “Total Working Days” on the exam to compute attendance %.</span>}
+                    {meTotalDays != null && mePresent !== '' && Number(mePresent) / meTotalDays < 0.75 && (
+                      <span className="pb-2 text-sm font-medium text-red-600">Below 75% — counts as fail in attendance</span>
+                    )}
+                  </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <Button onClick={saveStudentMarks} disabled={meSaving}>{meSaving ? 'Saving…' : 'Save Marks'}</Button>
                     <Button variant="outline" onClick={() => openPdf({ url: `/pdf/marksheet?examId=${meExamId}&studentId=${meStudentId}`, filename: `marksheet-${meStudentName}.pdf`, title: `Marks Sheet — ${meStudentName}` })}>Marks Sheet</Button>
@@ -308,6 +373,7 @@ export default function Exams() {
                   <span className="text-sm text-slate-500">Whole class (2 per A4 landscape):</span>
                   <Button variant="outline" onClick={() => openPdf({ url: `/pdf/class-marksheet?examId=${rlExamId}&classId=${rlClassId}`, filename: 'class-marksheet.pdf', title: 'Class Marks Sheet' })}>Class Marks Sheet</Button>
                   {!rlMonthly && <Button variant="outline" onClick={() => openPdf({ url: `/pdf/class-gradesheet?examId=${rlExamId}&classId=${rlClassId}`, filename: 'class-gradesheet.pdf', title: 'Class Grade Sheet' })}>Class Grade Sheet</Button>}
+                  <Button variant="outline" onClick={() => openPdf({ url: `/pdf/tabulation?examId=${rlExamId}&classId=${rlClassId}`, filename: 'tabulation.pdf', title: 'Tabulation Record' })}>Tabulation Record</Button>
                 </div>
               )}
 
@@ -324,6 +390,31 @@ export default function Exams() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Edit exam */}
+      <Dialog open={!!editExam} onOpenChange={(o) => { if (!o) setEditExam(null); }}>
+        <DialogContent
+          title="Edit Exam"
+          footer={
+            <>
+              <Button variant="outline" onClick={() => setEditExam(null)}>Cancel</Button>
+              <Button onClick={saveEditExam} disabled={savingEdit || !editForm.name.trim()}>{savingEdit ? 'Saving…' : 'Save Changes'}</Button>
+            </>
+          }
+        >
+          <div className="space-y-3">
+            <Field label="Exam Type">
+              <Select value={editForm.examType} onChange={(e) => setEditForm({ ...editForm, examType: e.target.value })}>
+                {EXAM_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+              </Select>
+            </Field>
+            <Field label="Name"><Input value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} placeholder="e.g. First Terminal Exam" /></Field>
+            <Field label="Term"><Input value={editForm.term} onChange={(e) => setEditForm({ ...editForm, term: e.target.value })} placeholder="Term 1" /></Field>
+            <Field label="Session"><Input value={editForm.sessionLabel} onChange={(e) => setEditForm({ ...editForm, sessionLabel: e.target.value })} placeholder="2082-83" /></Field>
+            <Field label="Total Working Days"><Input type="number" value={editForm.totalWorkingDays} onChange={(e) => setEditForm({ ...editForm, totalWorkingDays: e.target.value })} placeholder="e.g. 56" /></Field>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

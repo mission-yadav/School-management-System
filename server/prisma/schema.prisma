@@ -109,6 +109,7 @@ model Student {
   parentId  Int?
 
   attendance   StudentAttendance[]
+  examAttendance ExamAttendance[]
   results      Result[]
   invoices     FeeInvoice[]
   certificates Certificate[]
@@ -332,16 +333,29 @@ model Scholarship {
 
 // ============================================================ EXAMINATION
 model Exam {
-  id           Int      @id @default(autoincrement())
-  name         String
-  examType     String   @default("TERMINAL_1") // TERMINAL_1 | TERMINAL_2 | TERMINAL_3 | FINAL | MONTHLY
-  term         String?
-  sessionLabel String?
-  createdAt    DateTime @default(now())
+  id               Int      @id @default(autoincrement())
+  name             String
+  examType         String   @default("TERMINAL_1") // TERMINAL_1 | TERMINAL_2 | TERMINAL_3 | FINAL | MONTHLY
+  term             String?
+  sessionLabel     String?
+  totalWorkingDays Int?     // total working days in the exam period (for attendance)
+  createdAt        DateTime @default(now())
 
-  subjects ExamSubject[]
-  results  Result[]
-  classes  ExamClass[]
+  subjects   ExamSubject[]
+  results    Result[]
+  classes    ExamClass[]
+  attendance ExamAttendance[]
+}
+
+model ExamAttendance {
+  id          Int     @id @default(autoincrement())
+  exam        Exam    @relation(fields: [examId], references: [id], onDelete: Cascade)
+  examId      Int
+  student     Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  studentId   Int
+  presentDays Int     // days the student was present out of the exam's total working days
+
+  @@unique([examId, studentId])
 }
 
 model ExamClass {

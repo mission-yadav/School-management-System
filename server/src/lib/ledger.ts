@@ -105,9 +105,9 @@ export async function revertBillingPeriod(): Promise<BSPeriod> {
 }
 
 // One-time headings added when the ledger begins. Annual Charge (yearly) and Computer Fee
-// (monthly) are NOT here — they recur; see ensureLedger.
+// (monthly) recur — see ensureLedger. Exam Fee is NOT auto-added: it's an opt-in per-month
+// charge applied on month-advance (see addMonthlyExamFee), so it never double-charges.
 const HEADINGS: { key: string; label: string }[] = [
-  { key: 'examFee', label: 'Exam Fee' },
   { key: 'miscCharge', label: 'Miscellaneous Charges' },
 ];
 
@@ -127,6 +127,21 @@ function latestTuitionAmount(items: { description: string; bsYear?: number | nul
   const tuition = items.filter(isTuitionLine);
   if (!tuition.length) return undefined;
   const latest = tuition.reduce((a, b) =>
+    (b.bsYear! > a.bsYear!) || (b.bsYear! === a.bsYear! && b.bsMonth! > a.bsMonth!) ? b : a
+  );
+  return latest.amount;
+}
+
+/**
+ * The student's current per-month Computer Fee rate = the amount of their most recent Computer
+ * Fee line — the exact mirror of latestTuitionAmount, so an individually-set computer amount
+ * carries forward each month instead of snapping back to the class default. Returns undefined
+ * when there are no computer lines yet (then the class default is used).
+ */
+function latestComputerAmount(items: { description: string; bsYear?: number | null; bsMonth?: number | null; amount: number }[]): number | undefined {
+  const computer = items.filter(isComputerLine);
+  if (!computer.length) return undefined;
+  const latest = computer.reduce((a, b) =>
     (b.bsYear! > a.bsYear!) || (b.bsYear! === a.bsYear! && b.bsMonth! > a.bsMonth!) ? b : a
   );
   return latest.amount;
@@ -203,7 +218,9 @@ export async function ensureLedger(studentId: number, period?: BSPeriod): Promis
   // one-time "Computer Fee" heading so it isn't double-counted alongside the monthly lines.
   if (inv.items.some((i) => i.bsMonth == null && i.description === 'Computer Fee'))
     await prisma.feeItem.deleteMany({ where: { invoiceId: inv.id, bsMonth: null, description: 'Computer Fee' } });
-  const computer = s?.computerFee ?? 0;
+  // Carry the student's current individual computer fee forward (their latest computer line),
+  // falling back to the class default — exactly like tuition (see latestComputerAmount).
+  const computer = latestComputerAmount(inv.items) ?? s?.computerFee ?? 0;
   if (computer > 0) {
     const computerMonths = new Set(inv.items.filter(isComputerLine).map((i) => `${i.bsYear}-${i.bsMonth}`));
     for (let m = 1; m <= month; m++) {
@@ -299,7 +316,8 @@ export async function ensureAllLedgers(): Promise<void> {
     }
 
     if (items.some((i) => i.bsMonth == null && i.description === 'Computer Fee')) legacyComputerInvIds.push(inv.id);
-    const computer = s?.computerFee ?? 0;
+    // carry the student's individual computer fee forward, else the class default (mirrors tuition)
+    const computer = latestComputerAmount(items) ?? s?.computerFee ?? 0;
     if (computer > 0) {
       const computerMonths = new Set(items.filter(isComputerLine).map((i) => `${i.bsYear}-${i.bsMonth}`));
       for (let m = 1; m <= month; m++) {
@@ -336,6 +354,36 @@ export async function ensureAllLedgers(): Promise<void> {
     await prisma.feeItem.deleteMany({ where: { invoiceId: { in: annualExemptInvIds }, description: 'Annual Charge' } });
   if (itemsToCreate.length)
     await prisma.feeItem.createMany({ data: itemsToCreate });
+}
+
+/**
+ * Add a dated "<Month> <Year> – Exam Fee" line (the given amount) to every active student's ledger
+ * for the given period, skipping any ledger that already has it. Used by the month-advance opt-in
+ * so the admin can charge an exam fee only in exam months. Returns the number of lines added.
+ */
+export async function addMonthlyExamFee(period: BSPeriod, amount: number): Promise<number> {
+  if (!amount || amount <= 0) return 0;
+  const students = await prisma.student.findMany({ where: { status: 'ACTIVE' }, select: { id: true } });
+  const ids = students.map((s) => s.id);
+  if (!ids.length) return 0;
+  await ensureAllLedgers(); // make sure every active student has a ledger first
+  const ledgers = await prisma.feeInvoice.findMany({ where: { isLedger: true, studentId: { in: ids } }, include: { items: true } });
+  const desc = monthDesc(period.month, period.year, 'Exam Fee');
+  const toCreate = ledgers
+    .filter((inv) => !inv.items.some((i) => i.description === desc))
+    .map((inv) => ({ invoiceId: inv.id, description: desc, amount, bsYear: period.year, bsMonth: period.month }));
+  if (toCreate.length) await prisma.feeItem.createMany({ data: toCreate });
+  return toCreate.length;
+}
+
+/**
+ * Remove the dated exam-fee line for a given period from every ledger (undo of addMonthlyExamFee).
+ * Returns the number of lines removed.
+ */
+export async function removeMonthlyExamFee(period: BSPeriod): Promise<number> {
+  const desc = monthDesc(period.month, period.year, 'Exam Fee');
+  const { count } = await prisma.feeItem.deleteMany({ where: { description: desc, bsYear: period.year, bsMonth: period.month } });
+  return count;
 }
 
 /**
@@ -383,9 +431,9 @@ async function syncOneLedger(student: any, s: any, period: BSPeriod): Promise<vo
   if (annualAmt > 0 && !student.annualExempt) await prisma.feeItem.updateMany({ where: { invoiceId: invId, description: 'Annual Charge' }, data: { amount: annualAmt } });
   else await prisma.feeItem.deleteMany({ where: { invoiceId: invId, description: 'Annual Charge' } });
 
-  // canonical one-time headings -> desired amount (0 = remove). Computer Fee is monthly now (above).
+  // canonical one-time headings -> desired amount (0 = remove). Computer Fee is monthly (above);
+  // Exam Fee is a per-month opt-in (addMonthlyExamFee) so it's intentionally not managed here.
   const desired: [string, number][] = [
-    ['Exam Fee', s?.examFee ?? 0],
     ['Miscellaneous Charges', s?.miscCharge ?? 0],
     ['Transportation Charge', student.usesTransport ? (student.transportFee ?? s?.transportFee ?? 0) : 0],
   ];

@@ -78,16 +78,22 @@ function BillingMonthCard({ onAdvanced }: { onAdvanced: () => void }) {
   const [info, setInfo] = useState<any>(null);
   const [action, setAction] = useState<null | 'advance' | 'revert'>(null);
   const [busy, setBusy] = useState(false);
+  const [addExam, setAddExam] = useState(false);
+  const [examAmt, setExamAmt] = useState('600');
 
   useEffect(() => { api.get('/fees/billing-period').then(({ data }) => setInfo(data)).catch(() => {}); }, []);
+
+  function openAdvance() { setAddExam(false); setExamAmt('600'); setAction('advance'); }
 
   async function run() {
     if (!action) return;
     setBusy(true);
     try {
-      const { data } = await api.post(`/fees/billing-period/${action}`);
+      const body = action === 'advance' && addExam ? { examFee: Number(examAmt) || 0 } : {};
+      const { data } = await api.post(`/fees/billing-period/${action}`, body);
       setInfo(data); setAction(null);
-      toast(`Billing month ${action === 'advance' ? 'advanced' : 'reverted'} to ${data.label}`);
+      const examNote = data.examAdded ? ` (exam fee added to ${data.examAdded} students)` : '';
+      toast(`Billing month ${action === 'advance' ? 'advanced' : 'reverted'} to ${data.label}${examNote}`);
       onAdvanced();
     } catch (e) { toast(apiError(e), 'error'); }
     finally { setBusy(false); }
@@ -108,7 +114,7 @@ function BillingMonthCard({ onAdvanced }: { onAdvanced: () => void }) {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {info.canRevert && <Button variant="outline" onClick={() => setAction('revert')}>← Revert to {info.prev.label}</Button>}
-          <Button onClick={() => setAction('advance')}>Update Month → {info.next.label}</Button>
+          <Button onClick={openAdvance}>Update Month → {info.next.label}</Button>
         </div>
       </CardContent>
 
@@ -127,8 +133,21 @@ function BillingMonthCard({ onAdvanced }: { onAdvanced: () => void }) {
               <p className="text-amber-700">Payments already recorded are kept, so a student who paid for {info.label} may show a credit until you advance again.</p>
             </div>
           ) : (
-            <div className="space-y-2 text-sm text-slate-600">
+            <div className="space-y-3 text-sm text-slate-600">
               <p>This moves the billing month from <b>{info.label}</b> to <b>{info.next.label}</b> and adds <b>{info.next.label}</b> tuition to every active student's ledger.</p>
+              <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
+                <label className="flex items-center gap-2 font-medium text-slate-700">
+                  <input type="checkbox" className="size-4 accent-[#262081]" checked={addExam} onChange={(e) => setAddExam(e.target.checked)} />
+                  Add exam fee for {info.next.label}
+                </label>
+                {addExam && (
+                  <div className="mt-2 flex items-center gap-2 pl-6">
+                    <span className="text-slate-600">Amount (Rs):</span>
+                    <Input type="number" value={examAmt} onChange={(e) => setExamAmt(e.target.value)} className="w-28" />
+                    <span className="text-xs text-slate-400">applied to every active student</span>
+                  </div>
+                )}
+              </div>
               <p className="text-amber-700">The new month's charges apply immediately and appear on the next bills.</p>
             </div>
           )}

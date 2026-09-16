@@ -2,11 +2,11 @@ import { Router } from 'express';
 import prisma from '../prisma.js';
 import { authRequired } from '../middleware/auth.js';
 import { asyncHandler, AppError, intParam } from '../lib/http.js';
-import { streamPdf, letterhead, heading, signatureBlock, schoolNameFont, bodyFonts, BRAND, LOGO_PATH, QR_PATH, SIGN_PATH, PRINCIPAL_SIGN_PATH, type SchoolInfo } from '../lib/pdf.js';
+import { streamPdf, letterhead, heading, signatureBlock, schoolNameFont, bodyFonts, remarkFont, BRAND, LOGO_PATH, QR_PATH, SIGN_PATH, PRINCIPAL_SIGN_PATH, type SchoolInfo } from '../lib/pdf.js';
 import { bsDate } from '../lib/nepaliDate.js';
 import { computeAudit, type Line } from '../lib/audit.js';
 import { getBillingPeriod, ensureAllLedgers, BS_MONTHS, buildSerialMap, serialNo, type BSPeriod } from '../lib/ledger.js';
-import { buildSheet, buildClassSheets, nebScale, nebFinal, type Sheet } from '../lib/exam.js';
+import { buildSheet, buildClassSheets, nebScale, nebFinal, bySubjectPriority, type Sheet } from '../lib/exam.js';
 
 /** "Up to Shrawan 2083" — the fee period the document covers (the billing month). */
 function upToLabel(period: BSPeriod) {
@@ -960,6 +960,17 @@ function drawExamSheet(doc: PDFKit.PDFDocument, ox: number, oy: number, W: numbe
 /* ---- NEB-style result sheet (grade or marks), adapted for the school ----
  * Uses the shared NEB 4.0 scale + credit-weighted GPA from lib/exam (nebScale/nebFinal). */
 type NebExtra = { dob: Date | null; fatherName: string | null; address: string | null; photoUrl: string | null };
+/** Descriptive remark for a percentage (matches the grading-scale descriptions). */
+function pctRemark(pct: number): string {
+  if (pct >= 90) return 'Outstanding';
+  if (pct >= 80) return 'Excellent';
+  if (pct >= 70) return 'Very Good';
+  if (pct >= 60) return 'Good';
+  if (pct >= 50) return 'Satisfactory';
+  if (pct >= 40) return 'Acceptable';
+  if (pct >= 35) return 'Basic';
+  return 'Needs Improvement';
+}
 /** Draws the sheet into a logical A4-portrait canvas, optionally translated/scaled into a
  *  sub-region (used to place two monthly marks sheets on one landscape A4). */
 function drawNebSheet(doc: PDFKit.PDFDocument, sheet: Sheet, school: SchoolInfo, extra: NebExtra, kind: 'grade' | 'marks' | 'monthly', opts: { ox?: number; oy?: number; scale?: number } = {}) {
@@ -994,9 +1005,17 @@ function drawNebSheet(doc: PDFKit.PDFDocument, sheet: Sheet, school: SchoolInfo,
   doc.fillColor(BRAND).font(bold).fontSize(14).text(gtText, gtX, y + 7, { width: gtW, align: 'center' });
   y += gtH + 10;
   const examLine = [sheet.exam?.name, sheet.exam?.term, sheet.exam?.sessionLabel].filter(Boolean).join('  ·  ');
-  doc.fillColor('#111').font(bold).fontSize(18);
-  doc.text(examLine || 'Examination', L, y, { width: tw, align: 'center' });
-  y += doc.heightOfString(examLine || 'Examination', { width: tw, align: 'center' }) + 10;
+  doc.font(bold).fontSize(18);
+  const elH = doc.heightOfString(examLine || 'Examination', { width: tw, align: 'center' });
+  if (monthly) {
+    const exBoxH = elH + 12;
+    doc.save().lineWidth(2.4).strokeColor(BRAND).rect(L, y, tw, exBoxH).stroke().restore();
+    doc.fillColor('#111').font(bold).fontSize(18).text(examLine || 'Examination', L, y + 6, { width: tw, align: 'center' });
+    y += exBoxH + 24;
+  } else {
+    doc.fillColor('#111').font(bold).fontSize(18).text(examLine || 'Examination', L, y, { width: tw, align: 'center' });
+    y += elH + 10;
+  }
 
   // ---- info block (a passport-photo box is reserved at the top-right) ----
   const info = (label: string, value: string, x: number, w: number, boldValue = false) => {
@@ -1029,6 +1048,11 @@ function drawNebSheet(doc: PDFKit.PDFDocument, sheet: Sheet, school: SchoolInfo,
     info('Address:  ', extra.address || '—', L, infoW); y += 21;
   }
 
+  // thick border around the details block (monthly)
+  if (monthly) {
+    doc.save().lineWidth(2.4).strokeColor(BRAND).rect(L - 6, infoTop - 7, tw + 12, (y - infoTop) + 9).stroke().restore();
+  }
+
   // photo box (skipped for monthly) — renders the student's photo if available, else a placeholder
   if (!monthly) {
     doc.save().rect(pbx, pby, pbw, pbh).lineWidth(0.8).strokeColor('#9aa1b0').stroke().restore();
@@ -1037,7 +1061,7 @@ function drawNebSheet(doc: PDFKit.PDFDocument, sheet: Sheet, school: SchoolInfo,
     if (!drewPhoto) doc.font(reg).fontSize(8).fillColor('#94a3b8').text("Student's\nPhoto", pbx, pby + pbh / 2 - 10, { width: pbw, align: 'center' });
   }
   doc.fillColor('#111');
-  y = Math.max(y, infoTop + (monthly ? 0 : pbh)) + 6;
+  y = Math.max(y, infoTop + (monthly ? 0 : pbh)) + (monthly ? 16 : 6);
 
   // ---- table (grade: credit/grade-point/grade per component; marks: theory/practical/total) ----
   const cols = kind === 'grade'
@@ -1080,6 +1104,16 @@ function drawNebSheet(doc: PDFKit.PDFDocument, sheet: Sheet, school: SchoolInfo,
   let totalCH = 0, totalGPxCH = 0;   // grade totals
   let totMarks = 0, totMax = 0;       // marks totals
 
+  // centred text with a trailing superscript "*" — flags a failing mark / grade / ABS / FAIL
+  const starCell = (colIdx: number, main: string, color: string, font: string, size: number, ry: number) => {
+    const cx = xAt(colIdx), cw = cols[colIdx].w, ss = size * 0.72;
+    doc.font(font).fontSize(size); const tw2 = doc.widthOfString(main);
+    doc.font(reg).fontSize(ss); const sw = doc.widthOfString('*');
+    const sx = cx + 3 + Math.max(0, ((cw - 6) - (tw2 + sw)) / 2);
+    doc.font(font).fontSize(size).fillColor(color).text(main, sx, ry, { lineBreak: false });
+    doc.font(reg).fontSize(ss).fillColor(color).text('*', sx + tw2 + 0.4, ry - size * 0.16, { lineBreak: false });
+  };
+
   if (kind === 'grade') {
     sheet.subjects.forEach((s, idx) => {
       const comps: { label: string; ch: number; grade: string; gp: number }[] = [];
@@ -1096,10 +1130,12 @@ function drawNebSheet(doc: PDFKit.PDFDocument, sheet: Sheet, school: SchoolInfo,
         doc.text(cp.label, xAt(1) + 4, y + 3.5, { width: cols[1].w - 8, lineBreak: false, ellipsis: true });
         doc.text(cp.ch.toFixed(2), xAt(2) + 3, y + 3.5, { width: cols[2].w - 6, align: 'center', lineBreak: false });
         doc.text(s.absent ? '-' : cp.gp.toFixed(1), xAt(3) + 3, y + 3.5, { width: cols[3].w - 6, align: 'center', lineBreak: false });
-        doc.text(s.absent ? 'ABS' : cp.grade, xAt(4) + 3, y + 3.5, { width: cols[4].w - 6, align: 'center', lineBreak: false });
-        const remark = s.absent || cp.grade === 'NG' ? 'FAIL' : 'PASS';
-        doc.font(bold).fillColor(remark === 'PASS' ? '#16a34a' : '#dc2626')
-          .text(remark, xAt(6) + 3, y + 3.5, { width: cols[6].w - 6, align: 'center', lineBreak: false });
+        const failGrade = s.absent || cp.grade === 'NG';
+        if (s.absent) starCell(4, 'ABS', '#dc2626', reg, 8.5, y + 3.5);
+        else if (cp.grade === 'NG') starCell(4, 'NG', '#dc2626', reg, 8.5, y + 3.5);
+        else doc.font(reg).fontSize(8.5).fillColor('#111').text(cp.grade, xAt(4) + 3, y + 3.5, { width: cols[4].w - 6, align: 'center', lineBreak: false });
+        if (failGrade) starCell(6, 'FAIL', '#dc2626', bold, 8.5, y + 3.5);
+        else doc.font(bold).fontSize(8.5).fillColor('#16a34a').text('PASS', xAt(6) + 3, y + 3.5, { width: cols[6].w - 6, align: 'center', lineBreak: false });
         doc.fillColor('#111');
         totalCH += cp.ch; totalGPxCH += (s.absent ? 0 : cp.gp) * cp.ch;
         subjCH += cp.ch; subjGPxCH += (s.absent ? 0 : cp.gp) * cp.ch;
@@ -1108,8 +1144,9 @@ function drawNebSheet(doc: PDFKit.PDFDocument, sheet: Sheet, school: SchoolInfo,
       const finalG = s.absent ? 'ABS' : nebFinal(subjCH ? subjGPxCH / subjCH : 0);
       const midY = blockTop + (comps.length * rowH - 9) / 2;
       doc.font(bold).fontSize(8.5).fillColor('#111')
-        .text(String(idx + 1), xAt(0) + 3, midY, { width: cols[0].w - 6, align: 'center', lineBreak: false })
-        .text(finalG, xAt(5) + 3, midY, { width: cols[5].w - 6, align: 'center', lineBreak: false });
+        .text(String(idx + 1), xAt(0) + 3, midY, { width: cols[0].w - 6, align: 'center', lineBreak: false });
+      if (s.absent || finalG === 'NG') starCell(5, finalG, '#dc2626', bold, 8.5, midY);
+      else doc.font(bold).fontSize(8.5).fillColor('#111').text(finalG, xAt(5) + 3, midY, { width: cols[5].w - 6, align: 'center', lineBreak: false });
     });
   } else if (monthly) {
     sheet.subjects.forEach((s, idx) => {
@@ -1121,12 +1158,25 @@ function drawNebSheet(doc: PDFKit.PDFDocument, sheet: Sheet, school: SchoolInfo,
       doc.text(s.subject, xAt(1) + 5, vy, { width: cols[1].w - 10, lineBreak: false, ellipsis: true });
       doc.text(String(s.maxMarks), xAt(2) + 3, vy, { width: cols[2].w - 6, align: 'center', lineBreak: false });
       doc.text(String(s.passMarks), xAt(3) + 3, vy, { width: cols[3].w - 6, align: 'center', lineBreak: false });
-      doc.text(s.absent ? 'ABS' : String(s.marks), xAt(4) + 3, vy, { width: cols[4].w - 6, align: 'center', lineBreak: false });
-      doc.fillColor(remark === 'PASS' ? '#16a34a' : '#dc2626').text(remark, xAt(5) + 3, vy, { width: cols[5].w - 6, align: 'center', lineBreak: false });
+      if (s.absent) starCell(4, 'ABS', '#dc2626', bold, 12, vy);
+      else if (!s.pass) starCell(4, String(s.marks), '#dc2626', bold, 12, vy);
+      else doc.font(bold).fontSize(12).fillColor('#111').text(String(s.marks), xAt(4) + 3, vy, { width: cols[4].w - 6, align: 'center', lineBreak: false });
+      if (remark === 'PASS') doc.font(bold).fontSize(12).fillColor('#16a34a').text(remark, xAt(5) + 3, vy, { width: cols[5].w - 6, align: 'center', lineBreak: false });
+      else starCell(5, 'FAIL', '#dc2626', bold, 12, vy);
       doc.fillColor('#111');
       totMarks += s.absent ? 0 : s.marks; totMax += s.maxMarks;
       y += rowH;
     });
+    // total row
+    const totPass = sheet.subjects.reduce((a, s) => a + s.passMarks, 0);
+    doc.rect(L, y, tw, rowH).fill('#e9ecf5');
+    const tvy = y + 7;
+    doc.font(bold).fontSize(12).fillColor(BRAND);
+    doc.text('Total', xAt(1) + 5, tvy, { width: cols[1].w - 10, lineBreak: false });
+    doc.text(String(totMax), xAt(2) + 3, tvy, { width: cols[2].w - 6, align: 'center', lineBreak: false });
+    doc.text(String(totPass), xAt(3) + 3, tvy, { width: cols[3].w - 6, align: 'center', lineBreak: false });
+    doc.text(String(totMarks), xAt(4) + 3, tvy, { width: cols[4].w - 6, align: 'center', lineBreak: false });
+    doc.fillColor('#111'); y += rowH;
   } else {
     const dash = '—';
     sheet.subjects.forEach((s, idx) => {
@@ -1140,9 +1190,11 @@ function drawNebSheet(doc: PDFKit.PDFDocument, sheet: Sheet, school: SchoolInfo,
       doc.text(String(s.maxMarks), xAt(2) + 3, y + 3.5, { width: cols[2].w - 6, align: 'center', lineBreak: false });
       doc.text(th, xAt(3) + 3, y + 3.5, { width: cols[3].w - 6, align: 'center', lineBreak: false });
       doc.text(pr, xAt(4) + 3, y + 3.5, { width: cols[4].w - 6, align: 'center', lineBreak: false });
-      doc.font(bold).text(s.absent ? 'ABS' : String(s.marks), xAt(5) + 3, y + 3.5, { width: cols[5].w - 6, align: 'center', lineBreak: false });
-      doc.font(bold).fillColor(remark === 'PASS' ? '#16a34a' : '#dc2626')
-        .text(remark, xAt(6) + 3, y + 3.5, { width: cols[6].w - 6, align: 'center', lineBreak: false });
+      if (s.absent) starCell(5, 'ABS', '#dc2626', bold, 8.5, y + 3.5);
+      else if (!s.pass) starCell(5, String(s.marks), '#dc2626', bold, 8.5, y + 3.5);
+      else doc.font(bold).fontSize(8.5).fillColor('#111').text(String(s.marks), xAt(5) + 3, y + 3.5, { width: cols[5].w - 6, align: 'center', lineBreak: false });
+      if (remark === 'PASS') doc.font(bold).fontSize(8.5).fillColor('#16a34a').text(remark, xAt(6) + 3, y + 3.5, { width: cols[6].w - 6, align: 'center', lineBreak: false });
+      else starCell(6, 'FAIL', '#dc2626', bold, 8.5, y + 3.5);
       doc.fillColor('#111');
       totMarks += s.absent ? 0 : s.marks; totMax += s.maxMarks;
       y += rowH;
@@ -1150,25 +1202,66 @@ function drawNebSheet(doc: PDFKit.PDFDocument, sheet: Sheet, school: SchoolInfo,
   }
   const bodyBottom = y;
 
-  // grid: outer box + column verticals + header underline
+  // grid: outer box + column verticals + header underline (+ full row grid for monthly)
   doc.save().lineWidth(0.8).strokeColor('#9aa1b0');
   doc.rect(L, headTop, tw, bodyBottom - headTop).stroke();
   for (let i = 1; i < cols.length; i++) doc.moveTo(xAt(i), headTop).lineTo(xAt(i), bodyBottom).stroke();
   doc.moveTo(L, bodyTop).lineTo(R, bodyTop).stroke();
+  if (monthly) { for (let yy = bodyTop + rowH; yy < bodyBottom - 0.5; yy += rowH) doc.moveTo(L, yy).lineTo(R, yy).stroke(); }
   doc.restore();
 
   // ---- summary ----
   y = bodyBottom + 8;
+  // attendance value "present/total working days" — starred (red) when below 75%
+  const att = sheet.attendance;
+  const attFail = att ? !att.pass : false;
+  const drawAttd = (y0: number, size: number) => {
+    if (att == null || att.present == null || !att.total) return;
+    const label = 'Attd.: ', ss = size * 0.72;
+    const pStr = String(att.present), rest = `/${att.total}`;
+    doc.font(bold).fontSize(size); const lw = doc.widthOfString(label), pw = doc.widthOfString(pStr), rw = doc.widthOfString(rest);
+    doc.font(reg).fontSize(ss); const sw = attFail ? doc.widthOfString('*') : 0;
+    const sx = L + (tw - (lw + pw + sw + rw)) / 2;
+    doc.font(bold).fontSize(size).fillColor('#111').text(label, sx, y0, { lineBreak: false });
+    // only the failing present number (+*) is red; "/total" stays black
+    doc.font(bold).fontSize(size).fillColor(attFail ? '#dc2626' : '#111').text(pStr, sx + lw, y0, { lineBreak: false });
+    let cx2 = sx + lw + pw;
+    if (attFail) { doc.font(reg).fontSize(ss).fillColor('#dc2626').text('*', cx2 + 0.4, y0 - size * 0.16, { lineBreak: false }); cx2 += sw + 0.4; }
+    doc.font(bold).fontSize(size).fillColor('#111').text(rest, cx2, y0, { lineBreak: false });
+    doc.fillColor('#111');
+  };
   if (kind === 'grade') {
     const gpa = totalCH ? totalGPxCH / totalCH : 0;
     doc.font(bold).fontSize(10).fillColor('#111')
       .text(`Total Credit Hours: ${totalCH.toFixed(2)}`, L, y, { lineBreak: false })
       .text(`Grade Point Average (GPA): ${gpa.toFixed(2)}`, L, y, { width: tw, align: 'right', lineBreak: false });
+    drawAttd(y, 10);
+  } else if (monthly) {
+    const pct = totMax ? Math.round((totMarks / totMax) * 10000) / 100 : 0;
+    doc.font(bold).fontSize(16).fillColor('#111')
+      .text(`Percentage: ${pct}%`, L, y, { lineBreak: false })
+      .text(`Result: ${sheet.result}`, L, y, { width: tw, align: 'right', lineBreak: false });
+    drawAttd(y + 3, 14);
+    y += 46; // breathing space above the remarks
+    // "Remarks:" label + the remark word (decorative Rooster font), centred on the page
+    const rf = remarkFont(doc);
+    const rLabel = 'Remarks:  ';
+    const rVal = pctRemark(pct);
+    const rLabelSize = 16, rValSize = 34;
+    doc.font(bold).fontSize(rLabelSize);
+    const rlw = doc.widthOfString(rLabel);
+    doc.font(rf).fontSize(rValSize);
+    const rvw = doc.widthOfString(rVal);
+    const rStart = L + (tw - (rlw + rvw)) / 2;
+    doc.font(bold).fontSize(rLabelSize).fillColor('#111').text(rLabel, rStart, y + 13, { lineBreak: false });
+    doc.font(rf).fontSize(rValSize).fillColor(BRAND).text(rVal, rStart + rlw, y, { lineBreak: false });
+    y += 52; // breathing space below
   } else {
     const pct = totMax ? Math.round((totMarks / totMax) * 10000) / 100 : 0;
-    doc.font(bold).fontSize(monthly ? 13 : 10).fillColor('#111')
+    doc.font(bold).fontSize(10).fillColor('#111')
       .text(`Total Marks: ${totMarks} / ${totMax}`, L, y, { lineBreak: false })
       .text(`Percentage: ${pct}%      Result: ${sheet.result}`, L, y, { width: tw, align: 'right', lineBreak: false });
+    drawAttd(y, 10);
   }
   y += 26;
   let sigY: number;
@@ -1176,7 +1269,7 @@ function drawNebSheet(doc: PDFKit.PDFDocument, sheet: Sheet, school: SchoolInfo,
     sigY = H - 150; // monthly: no note/grading scale — sit signatures partway down the page
   } else {
   doc.font(reg).fontSize(7.5).fillColor('#555')
-    .text('Note: One credit hour equals 32 clock hours.    TH = Theory   PR = Practical   IN = Internal   ABS = Absent   NG = Non-Graded', L, y, { width: tw });
+    .text('Note: One credit hour equals 32 clock hours.    TH = Theory   PR = Practical   ABS = Absent   NG = Non-Graded   * = Fail / attendance below 75%', L, y, { width: tw });
 
   // ---- grading scale legend (two side-by-side parts) ----
   const gsAll = [
@@ -1233,8 +1326,8 @@ function drawNebSheet(doc: PDFKit.PDFDocument, sheet: Sheet, school: SchoolInfo,
 
   // ---- signatures (Class Teacher + Principal, with the principal's signature centered on the line) ----
   try {
-    const sw = 94; // rendered width of the 123×111 fit box (image aspect ~0.85)
-    doc.image(PRINCIPAL_SIGN_PATH, R - 60 - sw / 2, sigY - 100, { fit: [123, 111] });
+    const sw = 46; // rendered width of the 62×56 fit box (image aspect ~0.83)
+    doc.image(PRINCIPAL_SIGN_PATH, R - 60 - sw / 2, sigY - 56, { fit: [62, 56] });
   } catch { /* signature optional */ }
   doc.font(reg).fontSize(9.5).fillColor('#111');
   doc.text('_____________________', L, sigY).text('Class Teacher', L, sigY + 14);
@@ -1244,6 +1337,7 @@ function drawNebSheet(doc: PDFKit.PDFDocument, sheet: Sheet, school: SchoolInfo,
 }
 
 const EMPTY_EXTRA: NebExtra = { dob: null, fatherName: null, address: null, photoUrl: null };
+const PRINT_SHRINK = 0.92; // shrink+centre sheets so nothing is clipped by the printer's margins
 
 /** Fetch header extras (DOB, father's name, address, photo) for a set of students. */
 async function studentExtras(ids: number[]): Promise<Map<number, NebExtra>> {
@@ -1269,14 +1363,18 @@ async function individualSheet(req: any, res: any, kind: 'marks' | 'grade') {
     // monthly marks sheet — NEB format scaled to a half-A4 panel (2-per-A4 landscape)
     const file = `marksheet-${sheet.student.iemis || sheet.student.admissionNo}.pdf`;
     streamPdf(res, file, (doc) => {
-      const halfW = doc.page.width / 2, H = doc.page.height, s = H / 841.89;
+      const W = doc.page.width, H = doc.page.height, halfW = W / 2;
+      const s = (H / 841.89) * PRINT_SHRINK, oy = (H - 841.89 * s) / 2, ox = (halfW - 595.28 * s) / 2;
       doc.save().dash(3, { space: 3 }).lineWidth(0.6).strokeColor('#bbbbbb').moveTo(halfW, 16).lineTo(halfW, H - 16).stroke().undash().restore();
-      drawNebSheet(doc, sheet, school, extra, 'monthly', { ox: 0, oy: 0, scale: s });
+      drawNebSheet(doc, sheet, school, extra, 'monthly', { ox, oy, scale: s });
     }, { size: 'A4', margin: 0, layout: 'landscape' });
     return;
   }
   const file = `${kind === 'grade' ? 'gradesheet' : 'marksheet'}-${sheet.student.iemis || sheet.student.admissionNo}.pdf`;
-  streamPdf(res, file, (doc) => drawNebSheet(doc, sheet, school, extra, kind), { size: 'A4', margin: 0 });
+  streamPdf(res, file, (doc) => {
+    const s = PRINT_SHRINK, ox = (doc.page.width - 595.28 * s) / 2, oy = (doc.page.height - 841.89 * s) / 2;
+    drawNebSheet(doc, sheet, school, extra, kind, { ox, oy, scale: s });
+  }, { size: 'A4', margin: 0 });
 }
 router.get('/marksheet', asyncHandler((req, res) => individualSheet(req, res, 'marks')));
 router.get('/gradesheet', asyncHandler((req, res) => individualSheet(req, res, 'grade')));
@@ -1296,24 +1394,168 @@ async function classSheets(req: any, res: any, kind: 'marks' | 'grade') {
     // monthly class marks sheet — NEB format, 2 students per A4 (landscape, left/right)
     const file = `class-marksheet-${sheets.length}.pdf`;
     streamPdf(res, file, (doc) => {
-      const halfW = doc.page.width / 2, H = doc.page.height, s = H / 841.89;
+      const W = doc.page.width, H = doc.page.height, halfW = W / 2;
+      const s = (H / 841.89) * PRINT_SHRINK, oy = (H - 841.89 * s) / 2, cx = (halfW - 595.28 * s) / 2;
       for (let p = 0; p * 2 < sheets.length; p++) {
         if (p > 0) doc.addPage();
         doc.save().dash(3, { space: 3 }).lineWidth(0.6).strokeColor('#bbbbbb').moveTo(halfW, 16).lineTo(halfW, H - 16).stroke().undash().restore();
-        sheets.slice(p * 2, p * 2 + 2).forEach((sh, slot) => drawNebSheet(doc, sh, school, exMap.get(sh.student.id) || EMPTY_EXTRA, 'monthly', { ox: slot * halfW, oy: 0, scale: s }));
+        sheets.slice(p * 2, p * 2 + 2).forEach((sh, slot) => drawNebSheet(doc, sh, school, exMap.get(sh.student.id) || EMPTY_EXTRA, 'monthly', { ox: slot * halfW + cx, oy, scale: s }));
       }
     }, { size: 'A4', margin: 0, layout: 'landscape' });
     return;
   }
   const file = `class-${kind === 'marks' ? 'marksheet' : 'gradesheet'}-${sheets.length}.pdf`;
   streamPdf(res, file, (doc) => {
-    sheets.forEach((s, i) => {
+    const s = PRINT_SHRINK, ox = (doc.page.width - 595.28 * s) / 2, oy = (doc.page.height - 841.89 * s) / 2;
+    sheets.forEach((sh, i) => {
       if (i > 0) doc.addPage();
-      drawNebSheet(doc, s, school, exMap.get(s.student.id) || EMPTY_EXTRA, kind);
+      drawNebSheet(doc, sh, school, exMap.get(sh.student.id) || EMPTY_EXTRA, kind, { ox, oy, scale: s });
     });
   }, { size: 'A4', margin: 0 });
 }
 router.get('/class-marksheet', asyncHandler((req, res) => classSheets(req, res, 'marks')));
 router.get('/class-gradesheet', asyncHandler((req, res) => classSheets(req, res, 'grade')));
+
+/** GET /api/pdf/tabulation?examId=&classId= — class tabulation record (all students × subjects). */
+router.get('/tabulation', asyncHandler(async (req, res) => {
+  const examId = Number(req.query.examId), classId = Number(req.query.classId);
+  if (!examId || !classId) throw new AppError(400, 'examId and classId required');
+  const school = await getSchool();
+  const exam = await prisma.exam.findUnique({ where: { id: examId } });
+  const monthly = exam?.examType === 'MONTHLY';
+  const cls = await prisma.class.findUnique({ where: { id: classId }, select: { name: true } });
+  const subjectRows = (await prisma.subject.findMany({ where: { classId, ...(monthly ? { inMonthly: true } : { inTerminal: true }) } }))
+    .sort((a, b) => bySubjectPriority(a.name, b.name));
+  const subjCols = subjectRows.map((s) => ({ name: s.name, full: monthly ? s.monthlyFull : s.theoryFull + s.practicalFull }));
+  const workingDays = req.query.workingDays ? String(req.query.workingDays).trim() : (exam?.totalWorkingDays != null ? String(exam.totalWorkingDays) : '');
+  const rollNum = (v: unknown) => { const n = Number(v); return Number.isFinite(n) ? n : 1e9; };
+  const sheets = (await buildClassSheets(examId, classId)).filter((s) => s.subjects.length)
+    .sort((a, b) => rollNum(a.student.rollNo) - rollNum(b.student.rollNo) || a.student.name.localeCompare(b.student.name));
+  if (!sheets.length) throw new AppError(404, 'No results entered for this class');
+
+  streamPdf(res, `tabulation-${cls?.name || classId}.pdf`, (doc) => {
+    const { reg, bold } = bodyFonts(doc);
+    const W = doc.page.width, H = doc.page.height;
+    const cols: { key: string; label: string; w: number; align: 'left' | 'right' | 'center' }[] = [
+      { key: 'sn', label: 'S.N.', w: 26, align: 'center' },
+      { key: 'roll', label: 'ROLL', w: 30, align: 'center' },
+      { key: 'name', label: 'STUDENT NAME', w: 150, align: 'left' },
+      ...subjCols.map((_, i) => ({ key: 'sub' + i, label: '', w: 0, align: 'center' as const })),
+      { key: 'total', label: 'TOTAL', w: 44, align: 'right' },
+      { key: 'full', label: 'FULL', w: 40, align: 'right' },
+      { key: 'pct', label: 'PERCENT', w: 46, align: 'right' },
+      ...(monthly ? [] : [{ key: 'gpa', label: 'GPA', w: 34, align: 'center' as const }, { key: 'grade', label: 'GRADE', w: 38, align: 'center' as const }]),
+      { key: 'attd', label: 'ATTD.', w: 48, align: 'center' },
+      { key: 'result', label: 'RESULT', w: 46, align: 'center' },
+      { key: 'rank', label: 'RANK', w: 30, align: 'center' },
+    ];
+    const fixedTotal = cols.filter((c) => !c.key.startsWith('sub')).reduce((a, c) => a + c.w, 0);
+    const subW = Math.max(30, ((W - 60) - fixedTotal) / (subjCols.length || 1));
+    cols.forEach((c) => { if (c.key.startsWith('sub')) c.w = subW; });
+    const tableW = cols.reduce((a, c) => a + c.w, 0);
+    const startX = Math.round((W - tableW) / 2);
+    const xAt = (i: number) => startX + cols.slice(0, i).reduce((a, c) => a + c.w, 0);
+    const bounds = cols.map((_, i) => xAt(i)).concat([startX + tableW]);
+    const contTop = 40, bottom = H - 34, ROW_H = 21, HEAD_H = 44;
+
+    let y = 0, boxTop = 0, open = false;
+    const flush = () => {
+      if (!open) return;
+      doc.save().lineWidth(0.6).strokeColor('#9aa1b0');
+      for (let i = 1; i < bounds.length - 1; i++) doc.moveTo(bounds[i], boxTop).lineTo(bounds[i], y).stroke();
+      doc.lineWidth(1.4).strokeColor(BRAND).rect(startX, boxTop, tableW, y - boxTop).stroke();
+      doc.restore(); open = false;
+    };
+    const hline = (yy: number, w: number, c: string) => doc.save().lineWidth(w).strokeColor(c).moveTo(startX, yy).lineTo(startX + tableW, yy).stroke().restore();
+
+    const drawHeader = () => {
+      boxTop = y;
+      doc.rect(startX, y, tableW, HEAD_H).fill(BRAND);
+      doc.fillColor('white').font(bold).fontSize(7.6);
+      cols.forEach((c, i) => {
+        const label = c.key.startsWith('sub') ? subjCols[Number(c.key.slice(3))].name : c.label;
+        doc.text(label, xAt(i) + 2, y + 5, { width: c.w - 4, align: c.align });
+      });
+      doc.save().lineWidth(0.5).strokeColor('#ffffff');
+      for (let i = 1; i < bounds.length - 1; i++) doc.moveTo(bounds[i], y).lineTo(bounds[i], y + HEAD_H).stroke();
+      doc.restore();
+      doc.fillColor('black'); y += HEAD_H; open = true;
+    };
+
+    y = contTop;
+    try { doc.image(LOGO_PATH, startX + 6, y, { fit: [52, 52] }); } catch { /* logo optional */ }
+    // centred letterhead-style heading (matches the school's grade-sheet format)
+    doc.fillColor(BRAND).font(schoolNameFont(doc)).fontSize(24).text(school.name, startX, y, { width: tableW, align: 'center', lineBreak: false });
+    if (school.address) doc.fillColor('#333').font(reg).fontSize(11).text(school.address, startX, y + 28, { width: tableW, align: 'center', lineBreak: false });
+    const examTitle = [exam?.name, exam?.sessionLabel].filter(Boolean).join(' ');
+    doc.fillColor('black').font(bold).fontSize(14).text(examTitle, startX, y + 44, { width: tableW, align: 'center', lineBreak: false });
+    // right-aligned class + total working days
+    doc.fillColor('black').font(bold).fontSize(12).text(`Class:- ${cls?.name || ''}`, startX, y + 42, { width: tableW, align: 'right', lineBreak: false });
+    doc.font(reg).fontSize(11).text(`Total Working Days: ${workingDays || '________'}`, startX, y + 60, { width: tableW, align: 'right', lineBreak: false });
+    y += 82;
+    drawHeader();
+
+    sheets.forEach((sh, idx) => {
+      if (y + ROW_H > bottom) { flush(); doc.addPage(); y = contTop; drawHeader(); }
+      if (idx % 2 === 1) { doc.rect(startX, y, tableW, ROW_H).fill('#f5f7fb'); doc.fillColor('black'); }
+      const bySub = new Map(sh.subjects.map((s) => [s.subject, s]));
+      const FS = 9, STAR = 6.5, ty = y + 6;
+      const cell = (i: number, txt: string, color?: string) => doc.font(reg).fontSize(FS).fillColor(color || '#111').text(txt, xAt(i) + 3, ty, { width: cols[i].w - 6, align: cols[i].align, lineBreak: false, ellipsis: true });
+      // draw text with a trailing superscript "*" (flags a failing mark / ABS / FAIL), keeping the pair centred in the cell
+      const cellStar = (i: number, main: string, color: string, fontMain: string) => {
+        const cx = xAt(i) + 3, cw = cols[i].w - 6;
+        doc.font(fontMain).fontSize(FS); const tw = doc.widthOfString(main);
+        doc.font(reg).fontSize(STAR); const sw = doc.widthOfString('*');
+        const sx = cx + Math.max(0, (cw - (tw + sw)) / 2);
+        doc.font(fontMain).fontSize(FS).fillColor(color).text(main, sx, ty, { lineBreak: false });
+        doc.font(reg).fontSize(STAR).fillColor(color).text('*', sx + tw + 0.4, ty - 1.6, { lineBreak: false });
+      };
+      cell(0, String(idx + 1));
+      cell(1, String(sh.student.rollNo ?? '—'));
+      doc.font(bold).fontSize(FS).fillColor('#111').text(sh.student.name, xAt(2) + 3, ty, { width: cols[2].w - 6, lineBreak: false, ellipsis: true });
+      subjCols.forEach((sc, si) => {
+        const r = bySub.get(sc.name);
+        if (!r) { cell(3 + si, '-'); return; }
+        if (r.absent) { cellStar(3 + si, 'ABS', '#dc2626', bold); return; }
+        if (!r.pass) { cellStar(3 + si, String(r.marks), '#dc2626', bold); return; }
+        cell(3 + si, String(r.marks));
+      });
+      let ci = 3 + subjCols.length;
+      cell(ci++, String(sh.total));
+      cell(ci++, String(sh.max));
+      cell(ci++, `${sh.percent}%`);
+      if (!monthly) {
+        cell(ci++, sh.gpa.toFixed(2));
+        if (sh.grade === 'NG') cellStar(ci++, sh.grade, '#dc2626', bold);
+        else cell(ci++, sh.grade);
+      }
+      // attendance: present/total — when below 75% only the present number (+*) is red; "/total" stays black
+      const att = sh.attendance;
+      if (att.present != null && att.total) {
+        if (!att.pass) {
+          const pStr = String(att.present), rest = `/${att.total}`;
+          doc.font(bold).fontSize(FS); const pw = doc.widthOfString(pStr), rw = doc.widthOfString(rest);
+          doc.font(reg).fontSize(STAR); const sw = doc.widthOfString('*');
+          const cxA = xAt(ci) + 3, cwA = cols[ci].w - 6;
+          const sxA = cxA + Math.max(0, (cwA - (pw + sw + rw)) / 2);
+          doc.font(bold).fontSize(FS).fillColor('#dc2626').text(pStr, sxA, ty, { lineBreak: false });
+          doc.font(reg).fontSize(STAR).fillColor('#dc2626').text('*', sxA + pw + 0.4, ty - 1.6, { lineBreak: false });
+          doc.font(bold).fontSize(FS).fillColor('#111').text(rest, sxA + pw + sw + 0.4, ty, { lineBreak: false });
+          ci++;
+        } else cell(ci++, `${att.present}/${att.total}`);
+      } else cell(ci++, '-');
+      if (sh.result === 'PASS') doc.font(bold).fontSize(FS).fillColor('#16a34a').text('PASS', xAt(ci) + 3, ty, { width: cols[ci].w - 6, align: 'center', lineBreak: false });
+      else cellStar(ci, 'FAIL', '#dc2626', bold);
+      ci++;
+      cell(ci++, String(sh.rank));
+      doc.fillColor('black'); y += ROW_H; hline(y, 0.6, '#9aa1b0');
+    });
+    flush();
+    doc.page.margins.bottom = 0; // avoid an auto-added blank page from the footer
+    doc.font(bold).fontSize(8).fillColor('#dc2626').text('*', startX, y + 7, { lineBreak: false });
+    doc.font(reg).fontSize(8).fillColor('#555').text(' Failed / Absent / attendance below 75%', startX + 5, y + 8, { lineBreak: false });
+    doc.font(reg).fontSize(8).fillColor('#94a3b8').text(`Generated ${bsDate(new Date())} (BS)  ·  ${school.name}`, startX, H - 22, { width: tableW, align: 'center', lineBreak: false });
+  }, { size: 'A4', margin: 30, layout: 'landscape' });
+}));
 
 export default router;

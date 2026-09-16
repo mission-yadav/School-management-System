@@ -13,6 +13,13 @@ const NAME_FONT_PATH = path.join(__dirname, '..', '..', 'assets', 'fonts', 'vipn
 
 const BODY_FONT_PATH = path.join(__dirname, '..', '..', 'assets', 'fonts', 'DejaVuSans.ttf');
 const BODY_BOLD_FONT_PATH = path.join(__dirname, '..', '..', 'assets', 'fonts', 'DejaVuSans-Bold.ttf');
+const REMARK_FONT_PATH = path.join(__dirname, '..', '..', 'assets', 'fonts', 'rooster.ttf');
+
+/** Decorative Rooster font (used for the Remarks word). Falls back to bold body font. */
+export function remarkFont(doc: PDFKit.PDFDocument): string {
+  try { doc.registerFont('Rooster', REMARK_FONT_PATH); return 'Rooster'; }
+  catch { return 'Helvetica-Bold'; }
+}
 
 /** Register the Vipnagorgialla display font (used only for the school name). Falls back to
  *  Helvetica if the file is missing. Returns the font name to pass to doc.font(). */
@@ -101,7 +108,7 @@ export function signatureBlock(doc: PDFKit.PDFDocument, role = 'Principal / Auth
   doc.text('_____________________', 50, y);
   doc.text('Date', 50, y + 15);
   // principal's signature, centred over the right-hand signature line
-  if (/principal/i.test(role)) { try { doc.image(PRINCIPAL_SIGN_PATH, 440 - 107 / 2, y - 114, { fit: [138, 126] }); } catch { /* signature optional */ } }
+  if (/principal/i.test(role)) { try { doc.image(PRINCIPAL_SIGN_PATH, 440 - 52 / 2, y - 63, { fit: [69, 63] }); } catch { /* signature optional */ } }
   doc.text('_____________________', 380, y);
   doc.text(role, 380, y + 15);
 }

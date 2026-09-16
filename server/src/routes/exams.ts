@@ -14,11 +14,29 @@ router.get('/', asyncHandler(async (_req, res) => {
 
 const EXAM_TYPES = ['TERMINAL_1', 'TERMINAL_2', 'TERMINAL_3', 'FINAL', 'MONTHLY'];
 router.post('/', requireRole('ADMIN'), asyncHandler(async (req, res) => {
-  const { name, term, sessionLabel, examType } = req.body || {};
+  const { name, term, sessionLabel, examType, totalWorkingDays } = req.body || {};
   if (!name) throw new AppError(400, 'name required');
   const type = EXAM_TYPES.includes(examType) ? examType : 'TERMINAL_1';
-  const exam = await prisma.exam.create({ data: { name, examType: type, term: term || null, sessionLabel: sessionLabel || null } });
+  const twd = totalWorkingDays === '' || totalWorkingDays == null ? null : Number(totalWorkingDays);
+  const exam = await prisma.exam.create({ data: { name, examType: type, term: term || null, sessionLabel: sessionLabel || null, totalWorkingDays: Number.isFinite(twd as number) ? twd : null } });
   res.status(201).json(exam);
+}));
+
+/** PATCH /api/exams/:id — update editable exam fields (name, type, term, session, working days). */
+router.patch('/:id', requireRole('ADMIN'), asyncHandler(async (req, res) => {
+  const id = intParam(req.params.id);
+  const { name, examType, term, sessionLabel, totalWorkingDays } = req.body || {};
+  const data: any = {};
+  if (name !== undefined) { if (!name) throw new AppError(400, 'name required'); data.name = name; }
+  if (examType !== undefined) data.examType = EXAM_TYPES.includes(examType) ? examType : 'TERMINAL_1';
+  if (term !== undefined) data.term = term || null;
+  if (sessionLabel !== undefined) data.sessionLabel = sessionLabel || null;
+  if (totalWorkingDays !== undefined) {
+    const twd = totalWorkingDays === '' || totalWorkingDays == null ? null : Number(totalWorkingDays);
+    data.totalWorkingDays = Number.isFinite(twd as number) ? twd : null;
+  }
+  const exam = await prisma.exam.update({ where: { id }, data });
+  res.json(exam);
 }));
 
 router.delete('/:id', requireRole('ADMIN'), asyncHandler(async (req, res) => {
@@ -126,7 +144,7 @@ router.get('/:id/entry', asyncHandler(async (req, res) => {
   const classId = Number(req.query.classId);
   const studentId = Number(req.query.studentId);
   if (!classId || !studentId) throw new AppError(400, 'classId and studentId required');
-  const exam = await prisma.exam.findUnique({ where: { id: examId }, select: { examType: true } });
+  const exam = await prisma.exam.findUnique({ where: { id: examId }, select: { examType: true, totalWorkingDays: true } });
   const monthly = exam?.examType === 'MONTHLY';
   const subjects = (await prisma.subject.findMany({
     where: { classId, ...(monthly ? { inMonthly: true } : { inTerminal: true }) },
@@ -151,7 +169,7 @@ router.get('/:id/entry', asyncHandler(async (req, res) => {
 /** POST /api/exams/:id/entry — save one student's marks across subjects */
 router.post('/:id/entry', asyncHandler(async (req, res) => {
   const examId = intParam(req.params.id);
-  const { studentId, records } = req.body || {};
+  const { studentId, records, presentDays } = req.body || {};
   if (!studentId || !Array.isArray(records)) throw new AppError(400, 'studentId and records[] required');
   const exam = await prisma.exam.findUnique({ where: { id: examId }, select: { examType: true } });
   const monthly = exam?.examType === 'MONTHLY';
@@ -197,8 +215,33 @@ router.post('/:id/entry', asyncHandler(async (req, res) => {
       create: { examId, subjectId, studentId: sid, ...data },
     });
   });
+
+  // attendance (present days) — a single per-student record for this exam
+  if (presentDays !== undefined) {
+    const pd = num(presentDays);
+    if (pd === null) {
+      ops.push(prisma.examAttendance.deleteMany({ where: { examId, studentId: sid } }) as any);
+    } else {
+      ops.push(prisma.examAttendance.upsert({
+        where: { examId_studentId: { examId, studentId: sid } },
+        update: { presentDays: pd },
+        create: { examId, studentId: sid, presentDays: pd },
+      }) as any);
+    }
+  }
+
   await prisma.$transaction(ops);
   res.json({ ok: true, saved: ops.length });
+}));
+
+/** GET /api/exams/:id/attendance?studentId= — a student's present days + the exam's total working days */
+router.get('/:id/attendance', asyncHandler(async (req, res) => {
+  const examId = intParam(req.params.id);
+  const studentId = Number(req.query.studentId);
+  if (!studentId) throw new AppError(400, 'studentId required');
+  const exam = await prisma.exam.findUnique({ where: { id: examId }, select: { totalWorkingDays: true } });
+  const att = await prisma.examAttendance.findUnique({ where: { examId_studentId: { examId, studentId } } });
+  res.json({ present: att?.presentDays ?? null, totalWorkingDays: exam?.totalWorkingDays ?? null });
 }));
 
 /** DELETE /api/exams/:id/entry/:studentId — reset (remove) all of a student's marks for this exam */
@@ -206,6 +249,7 @@ router.delete('/:id/entry/:studentId', requireRole('ADMIN'), asyncHandler(async 
   const examId = intParam(req.params.id);
   const studentId = intParam(req.params.studentId, 'studentId');
   const { count } = await prisma.result.deleteMany({ where: { examId, studentId } });
+  await prisma.examAttendance.deleteMany({ where: { examId, studentId } });
   res.json({ ok: true, removed: count });
 }));
 
