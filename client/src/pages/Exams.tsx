@@ -24,6 +24,9 @@ const EXAM_TYPES = [
 ];
 const examTypeLabel = (v: string) => EXAM_TYPES.find((t) => t.value === v)?.label || v;
 
+// Bikram Sambat months — the exam's month (shown on marks sheet & tabulation)
+const BS_MONTHS = ['Baisakh', 'Jestha', 'Asar', 'Shrawan', 'Bhadra', 'Ashwin', 'Kartik', 'Mangsir', 'Poush', 'Magh', 'Falgun', 'Chaitra'];
+
 export default function Exams() {
   const toast = useToast();
   const openPdf = usePdfViewer();
@@ -95,7 +98,7 @@ export default function Exams() {
   const examColumns: Column<any>[] = [
     { header: 'Name', accessor: (r) => r.name },
     { header: 'Type', accessor: (r) => examTypeLabel(r.examType) },
-    { header: 'Term', accessor: (r) => r.term },
+    { header: 'Month', accessor: (r) => r.term },
     { header: 'Work. Days', accessor: (r) => r.totalWorkingDays ?? '—' },
     { header: '#Results', accessor: (r) => r._count?.results ?? 0 },
     { header: 'Created', accessor: (r) => formatBS(r.createdAt) },
@@ -250,7 +253,12 @@ export default function Exams() {
                   </Select>
                 </Field>
                 <Field label="Name"><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. First Terminal Exam" /></Field>
-                <Field label="Term"><Input value={form.term} onChange={(e) => setForm({ ...form, term: e.target.value })} placeholder="Term 1" /></Field>
+                <Field label="Month">
+                  <Select value={form.term} onChange={(e) => setForm({ ...form, term: e.target.value })}>
+                    <option value="">Select month</option>
+                    {BS_MONTHS.map((m) => <option key={m} value={m}>{m}</option>)}
+                  </Select>
+                </Field>
                 <Field label="Session"><Input value={form.sessionLabel} onChange={(e) => setForm({ ...form, sessionLabel: e.target.value })} placeholder="2082-83" /></Field>
                 <Field label="Total Working Days"><Input type="number" value={form.totalWorkingDays} onChange={(e) => setForm({ ...form, totalWorkingDays: e.target.value })} placeholder="e.g. 56" /></Field>
                 <Button onClick={createExam} disabled={creating || !form.name.trim()}>{creating ? 'Creating…' : 'Create Exam'}</Button>
@@ -409,7 +417,12 @@ export default function Exams() {
               </Select>
             </Field>
             <Field label="Name"><Input value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} placeholder="e.g. First Terminal Exam" /></Field>
-            <Field label="Term"><Input value={editForm.term} onChange={(e) => setEditForm({ ...editForm, term: e.target.value })} placeholder="Term 1" /></Field>
+            <Field label="Month">
+              <Select value={editForm.term} onChange={(e) => setEditForm({ ...editForm, term: e.target.value })}>
+                <option value="">Select month</option>
+                {BS_MONTHS.map((m) => <option key={m} value={m}>{m}</option>)}
+              </Select>
+            </Field>
             <Field label="Session"><Input value={editForm.sessionLabel} onChange={(e) => setEditForm({ ...editForm, sessionLabel: e.target.value })} placeholder="2082-83" /></Field>
             <Field label="Total Working Days"><Input type="number" value={editForm.totalWorkingDays} onChange={(e) => setEditForm({ ...editForm, totalWorkingDays: e.target.value })} placeholder="e.g. 56" /></Field>
           </div>

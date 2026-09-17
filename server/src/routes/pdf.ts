@@ -19,14 +19,18 @@ function upToLabel(period: BSPeriod) {
 function particularLines(items: { description: string; amount: number; bsMonth?: number | null; bsYear?: number | null }[], period: BSPeriod) {
   const { year, month } = period;
   const isPrevDues = (i: { description: string }) => i.description === 'Previous Dues';
+  // A legacy one-time "Exam Fee" heading is always a *previous* charge — enclose it in Previous Dues
+  // on the intimation. New exam fees are dated per month: past ones fold into Previous Dues below,
+  // the current month's shows on its own. So the intimation only ever shows the current exam fee.
+  const isOldExam = (i: { description: string; bsMonth?: number | null }) => !i.bsMonth && i.description === 'Exam Fee';
   const prevDues = items
-    .filter((i) => isPrevDues(i) || (i.bsMonth && (i.bsYear! < year || (i.bsYear === year && i.bsMonth! < month))))
+    .filter((i) => isPrevDues(i) || isOldExam(i) || (i.bsMonth && (i.bsYear! < year || (i.bsYear === year && i.bsMonth! < month))))
     .reduce((a, i) => a + i.amount, 0);
-  const cmp = (d: string) => (d.endsWith('Computer Fee') ? 1 : 0); // tuition before computer within a month
+  const cmp = (d: string) => (d.endsWith('Computer Fee') ? 2 : d.endsWith('Exam Fee') ? 1 : 0); // tuition, then exam, then computer within a month
   const currentTuition = items.filter((i) => !isPrevDues(i) && i.bsMonth === month && i.bsYear === year).sort((a, b) => (a.bsMonth! - b.bsMonth!) || (cmp(a.description) - cmp(b.description)));
   const ORDER = ['Annual Charge', 'Computer Fee', 'Transportation Charge', 'Exam Fee', 'Miscellaneous Charges'];
   const rank = (d: string) => { const i = ORDER.indexOf(d); return i < 0 ? 90 : i; };
-  const headings = items.filter((i) => !i.bsMonth).sort((a, b) => rank(a.description) - rank(b.description));
+  const headings = items.filter((i) => !i.bsMonth && !isOldExam(i)).sort((a, b) => rank(a.description) - rank(b.description));
 
   const lines: { label: string; amount: number }[] = [];
   if (prevDues > 0) lines.push({ label: 'Previous Dues', amount: prevDues });
@@ -302,18 +306,13 @@ async function attachRoll(student: any): Promise<void> {
   }
 }
 
-/** Convert 1..3999 to a Roman numeral. */
-function toRoman(n: number): string {
-  if (!Number.isInteger(n) || n <= 0 || n >= 4000) return String(n);
-  const map: [number, string][] = [[1000,'M'],[900,'CM'],[500,'D'],[400,'CD'],[100,'C'],[90,'XC'],[50,'L'],[40,'XL'],[10,'X'],[9,'IX'],[5,'V'],[4,'IV'],[1,'I']];
-  let out = '';
-  for (const [v, s] of map) while (n >= v) { out += s; n -= v; }
-  return out;
-}
-/** Show a class name in Roman numerals when it's purely numeric (e.g. "10" -> "X"); else unchanged. */
-function romanClass(name: string | null | undefined): string {
+/** Show a numeric class name as a word (e.g. "9" -> "NINE"); named/pre-primary classes
+ *  (P.G., NURSERY, L.K.G., U.K.G., …) are left unchanged. */
+const CLASS_WORDS = ['', 'ONE', 'TWO', 'THREE', 'FOUR', 'FIVE', 'SIX', 'SEVEN', 'EIGHT', 'NINE', 'TEN', 'ELEVEN', 'TWELVE'];
+function classLabel(name: string | null | undefined): string {
   const t = (name || '').trim();
-  return /^\d+$/.test(t) ? toRoman(Number(t)) : (t || '—');
+  if (/^\d+$/.test(t)) return CLASS_WORDS[Number(t)] || t;
+  return t || '—';
 }
 
 // buildSerialMap + serialNo are shared from ../lib/ledger.js (see imports).
@@ -323,7 +322,7 @@ function panelSignature(doc: PDFKit.PDFDocument, ox: number, oy: number, R: numb
   const boxW = 120, x = R - boxW;
   const lineY = oy + QH - CARD_MARGIN - 22; // sit near the bottom border, clear of the fee table
   const sigW = 82, sigH = 40;
-  try { doc.image(SIGN_PATH, x + (boxW - sigW) / 2, lineY - sigH + 4, { fit: [sigW, sigH] }); } catch { /* signature optional */ }
+  try { doc.image(SIGN_PATH, x + (boxW - sigW) / 2 + 14, lineY - sigH + 4, { fit: [sigW, sigH] }); } catch { /* signature optional */ }
   doc.fillColor('black').font(reg).fontSize(8)
     .text('__________________', x, lineY, { width: boxW, align: 'center' })
     .text('Accountant', x, lineY + 11, { width: boxW, align: 'center' });
@@ -339,7 +338,7 @@ function drawBillPanel(doc: PDFKit.PDFDocument, ox: number, oy: number, school: 
 
   doc.font(reg).fontSize(7.5).fillColor('#555')
     .text(`Bill No: ${serialNo((inv.student as any)._sn, period.year)}`, L, y)
-    .text(`Date: ${bsDate(inv.createdAt)}`, L, y, { width: R - L, align: 'right' });
+    .text(`Date: ${bsDate(new Date())}`, L, y, { width: R - L, align: 'right' });
   doc.fillColor('black'); y += 14;
 
   const st = inv.student;
@@ -348,7 +347,7 @@ function drawBillPanel(doc: PDFKit.PDFDocument, ox: number, oy: number, school: 
   const roll = (st as any)._roll || st.rollNo || '—';
   y = panelInfo(doc, L, R, y, reg, bold,
     [['Student', st.name, true], ['Roll No', roll], ["Father's Name", father], ['IEMIS ID', st.iemis || '—']],
-    [['Class', romanClass(st.class?.name)], ['Contact', contact], ['Fee For', upToLabel(period), true]]);
+    [['Class', classLabel(st.class?.name)], ['Contact', contact], ['Fee For', upToLabel(period), true]]);
 
   const gross = inv.items.reduce((a: number, i: any) => a + i.amount, 0);
   const total = gross + inv.fine - inv.discount;
@@ -424,7 +423,7 @@ function drawReceiptPanel(doc: PDFKit.PDFDocument, ox: number, oy: number, schoo
   const roll = (st as any)._roll || st.rollNo || '—';
   y = panelInfo(doc, L, R, y, reg, bold,
     [['Student', st.name, true], ['Roll No', roll], ["Father's Name", father], ['IEMIS ID', st.iemis || '—']],
-    [['Class', romanClass(st.class?.name)], ['Contact', contact], ['Fee For', upToLabel(period), true]]);
+    [['Class', classLabel(st.class?.name)], ['Contact', contact], ['Fee For', upToLabel(period), true]]);
 
   const gridRow = billGridRow(doc, L, R, () => y, (ny) => { y = ny; }, reg, bold);
   gridRow('Description', 'Amount (Rs.)', { header: true });
@@ -504,8 +503,9 @@ function registerCells(inv: { items: { description: string; amount: number; bsMo
   const months: { y: number; m: number; amount: number }[] = [];
   for (const it of inv.items) {
     if (it.description === 'Previous Dues') continue;
-    if (it.bsMonth) { // dated monthly lines: Computer Fee has its own column, everything else is tuition
+    if (it.bsMonth) { // dated monthly lines: Computer/Exam have their own columns, everything else is tuition
       if (it.description.endsWith('Computer Fee')) { c.computer += it.amount; continue; }
+      if (it.description.endsWith('Exam Fee')) { c.exam += it.amount; continue; }
       c.monthly += it.amount; months.push({ y: it.bsYear || 0, m: it.bsMonth, amount: it.amount }); continue;
     }
     const k = LABELS[it.description]; if (k) c[k] += it.amount;
@@ -893,7 +893,7 @@ function drawExamSheet(doc: PDFKit.PDFDocument, ox: number, oy: number, W: numbe
 
   y = panelInfo(doc, L, R, y, reg, bold,
     [['Student', sheet.student.name, true], ['Roll No', String(sheet.student.rollNo ?? '—')]],
-    [['Class', romanClass(sheet.student.className)], ['Symbol No', sheet.student.iemis || sheet.student.admissionNo]]);
+    [['Class', classLabel(sheet.student.className)], ['Symbol No', sheet.student.iemis || sheet.student.admissionNo]]);
 
   // ---- table ----
   const cols = kind === 'marks'
@@ -1029,7 +1029,7 @@ function drawNebSheet(doc: PDFKit.PDFDocument, sheet: Sheet, school: SchoolInfo,
   const symbol = sheet.student.iemis || sheet.student.admissionNo;
   const secured = kind === 'grade' ? 'The grade(s) secured by:  ' : 'The marks secured by:  ';
   const roll = String(sheet.student.rollNo ?? '—');
-  const cls = romanClass(sheet.student.className);
+  const cls = classLabel(sheet.student.className);
   if (monthly) {
     // Class & Roll pinned to the far right (short values → names get almost the full width);
     // Symbol No sits a little left of them since it's long.
@@ -1487,10 +1487,10 @@ router.get('/tabulation', asyncHandler(async (req, res) => {
     // centred letterhead-style heading (matches the school's grade-sheet format)
     doc.fillColor(BRAND).font(schoolNameFont(doc)).fontSize(24).text(school.name, startX, y, { width: tableW, align: 'center', lineBreak: false });
     if (school.address) doc.fillColor('#333').font(reg).fontSize(11).text(school.address, startX, y + 28, { width: tableW, align: 'center', lineBreak: false });
-    const examTitle = [exam?.name, exam?.sessionLabel].filter(Boolean).join(' ');
+    const examTitle = [exam?.name, exam?.term, exam?.sessionLabel].filter(Boolean).join('  ·  '); // same format as the marks sheet
     doc.fillColor('black').font(bold).fontSize(14).text(examTitle, startX, y + 44, { width: tableW, align: 'center', lineBreak: false });
     // right-aligned class + total working days
-    doc.fillColor('black').font(bold).fontSize(12).text(`Class:- ${cls?.name || ''}`, startX, y + 42, { width: tableW, align: 'right', lineBreak: false });
+    doc.fillColor('black').font(bold).fontSize(12).text(`Class:- ${classLabel(cls?.name)}`, startX, y + 42, { width: tableW, align: 'right', lineBreak: false });
     doc.font(reg).fontSize(11).text(`Total Working Days: ${workingDays || '________'}`, startX, y + 60, { width: tableW, align: 'right', lineBreak: false });
     y += 82;
     drawHeader();
