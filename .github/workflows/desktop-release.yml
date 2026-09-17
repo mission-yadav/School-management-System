@@ -1,0 +1,96 @@
+name: Build & Publish Desktop
+
+# Builds the Windows installer on a Windows runner and uploads it to a GitHub Release
+# (as a DRAFT — review it, then click "Publish release" to roll it out via auto-update).
+#
+# Trigger by pushing a version tag that matches electron/package.json, e.g.:
+#   git tag v1.1.0 && git push origin v1.1.0
+# or run manually from the Actions tab (workflow_dispatch).
+#
+# Required repository secrets (Settings > Secrets and variables > Actions):
+#   DATABASE_URL         Neon POOLED connection string (?sslmode=require)
+#   JWT_ACCESS_SECRET    long random string (same across all builds)
+#   JWT_REFRESH_SECRET   long random string (same across all builds)
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write   # lets electron-builder create the GitHub Release
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30   # electron-builder should finish in <10 min; fail fast if it hangs
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: |
+          npm install
+          npm --prefix server install
+          npm --prefix client install
+          npm --prefix electron install
+
+      # npm links the root package (name "sms") into node_modules/sms, which points back at
+      # the repo root -> release/win-unpacked. electron-builder then tries to pack its own
+      # output recursively (the 30-min 7-Zip hang). Remove the self-links + any stale output.
+      - name: Remove self-referential links & stale output
+        shell: bash
+        run: |
+          rm -rf node_modules/sms electron/node_modules/sms server/node_modules/sms client/node_modules/sms || true
+          rm -rf release || true
+          echo "cleaned self-links and release/"
+
+      - name: Write runtime config (db.runtime.json)
+        shell: bash
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          JWT_ACCESS_SECRET: ${{ secrets.JWT_ACCESS_SECRET }}
+          JWT_REFRESH_SECRET: ${{ secrets.JWT_REFRESH_SECRET }}
+        run: |
+          node -e "const fs=require('fs');const need=['DATABASE_URL','JWT_ACCESS_SECRET','JWT_REFRESH_SECRET'];const o={};for(const k of need){if(!process.env[k]){console.error('  ERROR: missing secret '+k);process.exit(1);}o[k]=process.env[k];}fs.writeFileSync('electron/db.runtime.json',JSON.stringify(o,null,2));console.log('  wrote electron/db.runtime.json');"
+
+      # Generate the Prisma client BEFORE tsc — server code depends on its generated types.
+      - name: Generate Prisma client (Windows engine)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DIRECT_DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: npm --prefix server run prisma:generate
+
+      - name: Build client (Vite)
+        run: npm --prefix client run build
+
+      - name: Build server (tsc)
+        run: npm --prefix server run build
+
+      # Build the installer locally on the runner (no electron-builder publisher — that step
+      # was hanging on the GitHub upload/prev-release fetch). DEBUG surfaces where it is.
+      - name: Build installer (electron-builder, no publish)
+        env:
+          DEBUG: electron-builder
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'   # don't attempt code signing
+        run: npm --prefix electron run dist:win -- --publish never
+
+      - name: Upload to a draft GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ver=$(node -p "require('./electron/package.json').version")
+          tag="v$ver"
+          echo "Publishing assets for $tag"
+          ls -la release/*.exe release/*.blockmap release/latest.yml
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" release/*.exe release/*.blockmap release/latest.yml --clobber
+          else
+            gh release create "$tag" release/*.exe release/*.blockmap release/latest.yml \
+              --draft --title "$tag" \
+              --notes "Shared-database build. Download and test the .exe against Neon, then click **Publish release** to roll it out to all devices via auto-update."
+          fi

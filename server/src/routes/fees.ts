@@ -2,7 +2,7 @@ import { Router } from 'express';
 import prisma from '../prisma.js';
 import { authRequired, requireRole } from '../middleware/auth.js';
 import { asyncHandler, AppError, intParam } from '../lib/http.js';
-import { ensureLedger, ensureAllLedgers, syncClassLedgers, currentBS, getBillingPeriod, setBillingPeriod, advanceBillingPeriod, revertBillingPeriod, canRevertBilling, nextPeriod, previousPeriod, BS_MONTHS } from '../lib/ledger.js';
+import { ensureLedger, ensureAllLedgers, syncClassLedgers, currentBS, getBillingPeriod, setBillingPeriod, advanceBillingPeriod, revertBillingPeriod, canRevertBilling, nextPeriod, previousPeriod, BS_MONTHS, buildSerialMap, serialNo, addMonthlyExamFee } from '../lib/ledger.js';
 
 const router = Router();
 router.use(authRequired);
@@ -55,7 +55,7 @@ router.get('/', requireRole('ADMIN'), asyncHandler(async (req, res) => {
     const t = invoiceTotals(inv);
     // per-month tuition rate (latest real month) vs the accumulated total across months
     const monthItems = inv.items
-      .filter((i) => i.bsMonth && i.description !== 'Previous Dues')
+      .filter((i) => i.bsMonth && i.description.endsWith('Tuition Fee'))
       .sort((a, b) => (a.bsYear! - b.bsYear!) || (a.bsMonth! - b.bsMonth!));
     const components = componentsOf(inv.items);
     return {
@@ -105,7 +105,12 @@ function componentsOf(items: { description: string; amount: number; bsMonth?: nu
   for (const f of FEE_ORDER) out[f.key] = 0;
   for (const it of items) {
     if (it.description === 'Previous Dues') continue; // carried forward, not monthly tuition
-    if (it.bsMonth) { out.monthlyTuition += it.amount; continue; }
+    if (it.bsMonth) { // dated monthly lines: Computer/Exam have their own columns, everything else is tuition
+      if (it.description.endsWith('Computer Fee')) out.computerFee += it.amount;
+      else if (it.description.endsWith('Exam Fee')) out.examFee += it.amount;
+      else out.monthlyTuition += it.amount;
+      continue;
+    }
     const k = LABEL_TO_KEY[it.description]; if (k) out[k] = (out[k] || 0) + it.amount;
   }
   return out;
@@ -222,10 +227,15 @@ router.get('/ledger/:studentId', requireRole('ADMIN'), asyncHandler(async (req, 
   if (!student || !inv) throw new AppError(404, 'Not found');
   const t = invoiceTotals(inv);
   const { year, month } = await getBillingPeriod();
+  const sn = (await buildSerialMap()).get(studentId); // display bill/receipt no as JSS-<SN>/<year>
 
   const monthly = inv.items.filter((i) => i.bsMonth)
     .sort((a, b) => (a.bsYear! - b.bsYear!) || (a.bsMonth! - b.bsMonth!))
-    .map((i) => ({ id: i.id, label: i.description === 'Previous Dues' ? 'Previous Dues' : `${BS_MONTHS[i.bsMonth! - 1]} ${i.bsYear}`, bsYear: i.bsYear, bsMonth: i.bsMonth, amount: i.amount, description: i.description }));
+    .map((i) => {
+      const suffix = i.description.endsWith('Exam Fee') ? ' Exam Fee' : i.description.endsWith('Computer Fee') ? ' Computer Fee' : '';
+      const label = i.description === 'Previous Dues' ? 'Previous Dues' : `${BS_MONTHS[i.bsMonth! - 1]} ${i.bsYear}${suffix}`;
+      return { id: i.id, label, bsYear: i.bsYear, bsMonth: i.bsMonth, amount: i.amount, description: i.description };
+    });
   const headings = inv.items.filter((i) => !i.bsMonth)
     .map((i) => ({ id: i.id, label: i.description === 'Annual Charge' && i.bsYear ? `Annual Charge ${i.bsYear}` : i.description, amount: i.amount, description: i.description, bsYear: i.bsYear }));
 
@@ -244,7 +254,7 @@ router.get('/ledger/:studentId', requireRole('ADMIN'), asyncHandler(async (req, 
     discount: inv.discount, fine: inv.fine, previousPaid: opening?.amount || 0,
     totals: { billed: t.total, paid: t.paid, concession: t.concession, due: t.due },
     status: inv.status, dueDate: inv.dueDate,
-    payments: realPayments.map((p) => ({ id: p.id, receiptNo: p.receiptNo, amount: p.amount, less: p.less, method: p.method, paidAt: p.paidAt })),
+    payments: realPayments.map((p) => ({ id: p.id, receiptNo: serialNo(sn, year), amount: p.amount, less: p.less, method: p.method, paidAt: p.paidAt })),
   });
 }));
 
@@ -302,11 +312,16 @@ router.get('/billing-period', requireRole('ADMIN'), asyncHandler(async (_req, re
   res.json(await periodResponse(await getBillingPeriod()));
 }));
 
-/** POST /api/fees/billing-period/advance — move to the next month and apply its charges to all ledgers. */
-router.post('/billing-period/advance', requireRole('ADMIN'), asyncHandler(async (_req, res) => {
+/** POST /api/fees/billing-period/advance — move to the next month and apply its charges to all
+ *  ledgers. Optional body { examFee } adds a per-month exam-fee line to every student for the new
+ *  month (opt-in from the confirmation box); omit or 0 to skip. */
+router.post('/billing-period/advance', requireRole('ADMIN'), asyncHandler(async (req, res) => {
   const p = await advanceBillingPeriod();
   await ensureAllLedgers();
-  res.json(await periodResponse(p));
+  const raw = req.body?.examFee;
+  const amt = raw == null || raw === '' ? 0 : Number(raw);
+  const examAdded = Number.isFinite(amt) && amt > 0 ? await addMonthlyExamFee(p, amt) : 0;
+  res.json({ ...(await periodResponse(p)), examAdded });
 }));
 
 /** POST /api/fees/billing-period/revert — step back one month, removing that month's charges from all ledgers. */
@@ -333,7 +348,9 @@ router.get('/:id', requireRole('ADMIN'), asyncHandler(async (req, res) => {
     include: { items: { include: { category: true } }, payments: { orderBy: { paidAt: 'desc' } }, student: true },
   });
   if (!inv) throw new AppError(404, 'Invoice not found');
-  res.json({ ...inv, ...invoiceTotals(inv) });
+  const { year } = await getBillingPeriod();
+  const rno = serialNo((await buildSerialMap()).get(inv.studentId), year);
+  res.json({ ...inv, payments: inv.payments.map((p) => ({ ...p, receiptNo: rno })), ...invoiceTotals(inv) });
 }));
 
 /** POST /api/fees (ADMIN) — create invoice with line items */
@@ -355,7 +372,7 @@ router.post('/', requireRole('ADMIN'), asyncHandler(async (req, res) => {
 /** POST /api/fees/:id/pay (ADMIN) — record a payment, recompute status */
 router.post('/:id/pay', requireRole('ADMIN'), asyncHandler(async (req, res) => {
   const id = intParam(req.params.id);
-  const { amount, method, reference, less } = req.body || {};
+  const { amount, method, reference, less, manualReceiptNo } = req.body || {};
   const inv = await prisma.feeInvoice.findUnique({ where: { id }, include: { items: true, payments: true } });
   if (!inv) throw new AppError(404, 'Invoice not found');
   const pay = Number(amount || 0);
@@ -363,16 +380,33 @@ router.post('/:id/pay', requireRole('ADMIN'), asyncHandler(async (req, res) => {
   if ((!pay || pay <= 0) && lessAmt <= 0) throw new AppError(400, 'Enter a payment amount or a concession');
 
   const receiptNo = 'RCPT' + Date.now().toString().slice(-8) + Math.floor(Math.random() * 90 + 10);
+  const manualNo = typeof manualReceiptNo === 'string' && manualReceiptNo.trim() ? manualReceiptNo.trim() : null;
   const { total, settled } = invoiceTotals(inv);
   const newStatus = statusFor(total, settled + pay + lessAmt);
 
   const [payment] = await prisma.$transaction([
     prisma.payment.create({
-      data: { invoiceId: id, amount: pay, less: lessAmt, method: method || 'CASH', reference: reference || null, receiptNo, receivedById: req.user!.id },
+      data: { invoiceId: id, amount: pay, less: lessAmt, method: method || 'CASH', reference: reference || null, receiptNo, manualReceiptNo: manualNo, receivedById: req.user!.id },
     }),
     prisma.feeInvoice.update({ where: { id }, data: { status: newStatus } }),
   ]);
-  res.json({ ok: true, receiptNo, paymentId: payment.id, status: newStatus });
+  const { year } = await getBillingPeriod();
+  const displayNo = manualNo || serialNo((await buildSerialMap()).get(inv.studentId), year);
+  res.json({ ok: true, receiptNo: displayNo, paymentId: payment.id, status: newStatus });
+}));
+
+/** DELETE /api/fees/payment/:paymentId (ADMIN) — revert one collected payment (paid correction). */
+router.delete('/payment/:paymentId', requireRole('ADMIN'), asyncHandler(async (req, res) => {
+  const pid = intParam(req.params.paymentId, 'paymentId');
+  const payment = await prisma.payment.findUnique({ where: { id: pid } });
+  if (!payment) throw new AppError(404, 'Payment not found');
+  await prisma.payment.delete({ where: { id: pid } });
+  const inv = await prisma.feeInvoice.findUnique({ where: { id: payment.invoiceId }, include: { items: true, payments: true } });
+  if (inv) {
+    const { total, settled } = invoiceTotals(inv);
+    await prisma.feeInvoice.update({ where: { id: inv.id }, data: { status: statusFor(total, settled) } });
+  }
+  res.json({ ok: true, reverted: { amount: payment.amount, less: payment.less } });
 }));
 
 /** PUT /api/fees/:id (ADMIN) — edit title/due/discount(Less)/fine and (optionally) all line items */

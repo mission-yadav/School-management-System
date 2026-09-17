@@ -8,6 +8,13 @@ build/
 .env
 .env.local
 
+# build-time DB connection injected into the desktop app (contains the Neon URL) — never commit
+electron/db.runtime.json
+
+# one-time SQLite->Neon migration artifacts (regenerable from schema.prisma + dev.db)
+server/prisma/.sqlite-client/
+server/prisma/sqlite-src.prisma
+
 # prisma / db
 server/prisma/*.db
 server/prisma/*.db-journal

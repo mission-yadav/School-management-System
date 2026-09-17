@@ -1,6 +1,7 @@
 // Electron main process for the Janaki School desktop app.
-// Boots the bundled Express+Prisma server (SQLite) as a child process, then opens
-// a window pointing at it. Designed to run on Windows 7 and above (Electron 22).
+// Boots the bundled Express+Prisma server (shared PostgreSQL / Neon) as a child process,
+// then opens a window pointing at it. Designed to run on Windows 7 and above (Electron 22).
+// The database now lives in the cloud, so every device shares the same data (needs internet).
 const { app, BrowserWindow, shell, dialog } = require('electron');
 const { fork } = require('child_process');
 const path = require('path');
@@ -17,11 +18,22 @@ const resRoot = isPackaged ? process.resourcesPath : path.join(__dirname, '..');
 const serverDir = path.join(resRoot, 'server');
 const serverEntry = path.join(serverDir, 'dist', 'index.js');
 const clientDist = path.join(resRoot, 'client', 'dist');
-const seedDb = path.join(serverDir, 'prisma', 'seed.db'); // PII-free starter DB (real data lives in userData)
 
-// The live database lives in the OS user-data dir so it is writable and survives updates.
-const dbPath = path.join(app.getPath('userData'), 'janaki-school.db');
-const dbUrl = 'file:' + dbPath.replace(/\\/g, '/');
+// Runtime secrets — the shared Neon DATABASE_URL and the JWT signing secrets — are
+// injected at build time into db.runtime.json (gitignored, bundled next to main.cjs),
+// and fall back to process.env for local dev. Nothing secret lives in the git repo.
+function loadRuntimeConfig() {
+  const cfg = {};
+  try {
+    const p = path.join(__dirname, 'db.runtime.json');
+    if (fs.existsSync(p)) Object.assign(cfg, JSON.parse(fs.readFileSync(p, 'utf8')));
+  } catch { /* ignore a malformed config; the missing-URL check below will catch it */ }
+  for (const k of ['DATABASE_URL', 'JWT_ACCESS_SECRET', 'JWT_REFRESH_SECRET']) {
+    if (process.env[k]) cfg[k] = process.env[k]; // env overrides bundled config (dev)
+  }
+  return cfg;
+}
+const runtimeConfig = loadRuntimeConfig();
 
 let serverProc = null;
 let serverLog = '';
@@ -34,16 +46,11 @@ function appendLog(s) {
   try { fs.appendFileSync(logPath, s); } catch { /* ignore */ }
 }
 
-function ensureDatabase() {
-  if (!fs.existsSync(dbPath)) {
-    if (fs.existsSync(seedDb)) fs.copyFileSync(seedDb, dbPath); // first run: start from the shipped data
-    else fs.writeFileSync(dbPath, ''); // empty file; server/prisma will create tables
-  }
-}
-
 function startServer() {
-  ensureDatabase();
-  try { fs.writeFileSync(logPath, `--- start ${new Date().toISOString()} ---\ndb=${dbUrl}\nentry=${serverEntry}\n`); } catch { /* ignore */ }
+  // Log only the DB host (never the full URL) so the password stays out of server.log.
+  let dbHost = '(unset)';
+  try { dbHost = new URL(runtimeConfig.DATABASE_URL).host; } catch { /* leave as (unset) */ }
+  try { fs.writeFileSync(logPath, `--- start ${new Date().toISOString()} ---\ndb=${dbHost}\nentry=${serverEntry}\n`); } catch { /* ignore */ }
   serverProc = fork(serverEntry, [], {
     cwd: serverDir,
     env: {
@@ -51,8 +58,8 @@ function startServer() {
       ELECTRON_RUN_AS_NODE: '1',
       NODE_ENV: 'production',
       PORT: String(PORT),
-      DATABASE_URL: dbUrl,
       CLIENT_DIST: clientDist,
+      ...runtimeConfig, // shared Neon DATABASE_URL + JWT_ACCESS_SECRET + JWT_REFRESH_SECRET
     },
     stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
   });
@@ -130,13 +137,23 @@ function setupAutoUpdate() {
 }
 
 app.whenReady().then(async () => {
+  if (!runtimeConfig.DATABASE_URL) {
+    dialog.showErrorBox('Configuration error',
+      'No database connection is configured for this build.\n\n' +
+      'The shared-database version must be built with db.runtime.json present. Please reinstall the official installer.');
+    app.quit();
+    return;
+  }
   try {
     startServer();
     await waitForServer();
     createWindow();
     setTimeout(setupAutoUpdate, 4000); // check shortly after the window is up
   } catch (err) {
-    dialog.showErrorBox('Startup failed', `${String(err && err.message || err)}\n\nFull log: ${logPath}`);
+    dialog.showErrorBox('Startup failed',
+      'Could not connect to the school database.\n\n' +
+      'Please check that this computer is connected to the internet, then reopen the app.\n\n' +
+      `Technical detail: ${String(err && err.message || err)}\n\nFull log: ${logPath}`);
     app.quit();
   }
 });

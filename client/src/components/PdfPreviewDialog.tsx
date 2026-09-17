@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { Download } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Download, Printer } from 'lucide-react';
 import api, { apiError } from '@/lib/api';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
@@ -7,11 +7,12 @@ import { Loading } from '@/components/PageHeader';
 
 export interface PdfPreview { url: string; filename: string; title?: string; }
 
-/** Preview an authed PDF endpoint in a modal, with a Download button. */
+/** Preview an authed PDF endpoint in a modal, with Download and Print. */
 export function PdfPreviewDialog({ preview, onClose }: { preview: PdfPreview | null; onClose: () => void }) {
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const iframeRef = useRef<HTMLIFrameElement>(null);
 
   useEffect(() => {
     if (!preview) { setBlobUrl(null); setError(''); return; }
@@ -32,6 +33,11 @@ export function PdfPreviewDialog({ preview, onClose }: { preview: PdfPreview | n
     a.click();
   }
 
+  function print() {
+    const win = iframeRef.current?.contentWindow;
+    if (win) { win.focus(); win.print(); }
+  }
+
   return (
     <Dialog open={!!preview} onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent
@@ -39,6 +45,7 @@ export function PdfPreviewDialog({ preview, onClose }: { preview: PdfPreview | n
         title={preview?.title || 'Preview'}
         footer={<>
           <Button variant="secondary" onClick={onClose}>Close</Button>
+          <Button variant="outline" onClick={print} disabled={!blobUrl}><Printer className="size-4" /> Print</Button>
           <Button onClick={download} disabled={!blobUrl}><Download className="size-4" /> Download</Button>
         </>}
       >
@@ -47,7 +54,7 @@ export function PdfPreviewDialog({ preview, onClose }: { preview: PdfPreview | n
         ) : error ? (
           <div className="py-10 text-center text-sm text-red-600">{error}</div>
         ) : blobUrl ? (
-          <iframe src={blobUrl} title="PDF preview" className="h-[65vh] w-full rounded-md border border-slate-200" />
+          <iframe ref={iframeRef} src={blobUrl} title="PDF preview" className="h-[65vh] w-full rounded-md border border-slate-200" />
         ) : null}
       </DialogContent>
     </Dialog>

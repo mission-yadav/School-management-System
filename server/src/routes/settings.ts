@@ -50,6 +50,15 @@ router.put('/', requireRole('ADMIN'), asyncHandler(async (req, res) => {
   res.json(out);
 }));
 
+/** POST /api/settings/fee-pin/verify — check the Fee Management access PIN (default 4321). */
+router.post('/fee-pin/verify', asyncHandler(async (req, res) => {
+  const { pin } = req.body || {};
+  const row = await prisma.setting.findUnique({ where: { key: 'feePin' } });
+  let stored = '4321';
+  if (row) { try { stored = JSON.parse(row.value); } catch { stored = row.value; } }
+  res.json({ ok: String(pin) === String(stored) });
+}));
+
 router.get('/grades', asyncHandler(async (_req, res) => {
   const grades = await prisma.gradeScale.findMany({ orderBy: { minPercent: 'desc' } });
   res.json(grades);

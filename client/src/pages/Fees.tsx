@@ -19,7 +19,7 @@ import { PdfPreviewDialog, type PdfPreview } from '@/components/PdfPreviewDialog
 import { FeeEditDialog } from '@/components/FeeEditDialog';
 import { StudentLedgerDialog } from '@/components/StudentLedgerDialog';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
-import { Pencil, FileText, Wallet, ScrollText, ChevronDown } from 'lucide-react';
+import { Pencil, FileText, Wallet, ScrollText, ChevronDown, Undo2 } from 'lucide-react';
 
 type Line = { key: string; label: string; amount: number | string; include: boolean; conditional?: string };
 
@@ -78,16 +78,22 @@ function BillingMonthCard({ onAdvanced }: { onAdvanced: () => void }) {
   const [info, setInfo] = useState<any>(null);
   const [action, setAction] = useState<null | 'advance' | 'revert'>(null);
   const [busy, setBusy] = useState(false);
+  const [addExam, setAddExam] = useState(false);
+  const [examAmt, setExamAmt] = useState('600');
 
   useEffect(() => { api.get('/fees/billing-period').then(({ data }) => setInfo(data)).catch(() => {}); }, []);
+
+  function openAdvance() { setAddExam(false); setExamAmt('600'); setAction('advance'); }
 
   async function run() {
     if (!action) return;
     setBusy(true);
     try {
-      const { data } = await api.post(`/fees/billing-period/${action}`);
+      const body = action === 'advance' && addExam ? { examFee: Number(examAmt) || 0 } : {};
+      const { data } = await api.post(`/fees/billing-period/${action}`, body);
       setInfo(data); setAction(null);
-      toast(`Billing month ${action === 'advance' ? 'advanced' : 'reverted'} to ${data.label}`);
+      const examNote = data.examAdded ? ` (exam fee added to ${data.examAdded} students)` : '';
+      toast(`Billing month ${action === 'advance' ? 'advanced' : 'reverted'} to ${data.label}${examNote}`);
       onAdvanced();
     } catch (e) { toast(apiError(e), 'error'); }
     finally { setBusy(false); }
@@ -108,7 +114,7 @@ function BillingMonthCard({ onAdvanced }: { onAdvanced: () => void }) {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {info.canRevert && <Button variant="outline" onClick={() => setAction('revert')}>← Revert to {info.prev.label}</Button>}
-          <Button onClick={() => setAction('advance')}>Update Month → {info.next.label}</Button>
+          <Button onClick={openAdvance}>Update Month → {info.next.label}</Button>
         </div>
       </CardContent>
 
@@ -127,8 +133,21 @@ function BillingMonthCard({ onAdvanced }: { onAdvanced: () => void }) {
               <p className="text-amber-700">Payments already recorded are kept, so a student who paid for {info.label} may show a credit until you advance again.</p>
             </div>
           ) : (
-            <div className="space-y-2 text-sm text-slate-600">
+            <div className="space-y-3 text-sm text-slate-600">
               <p>This moves the billing month from <b>{info.label}</b> to <b>{info.next.label}</b> and adds <b>{info.next.label}</b> tuition to every active student's ledger.</p>
+              <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
+                <label className="flex items-center gap-2 font-medium text-slate-700">
+                  <input type="checkbox" className="size-4 accent-[#262081]" checked={addExam} onChange={(e) => setAddExam(e.target.checked)} />
+                  Add exam fee for {info.next.label}
+                </label>
+                {addExam && (
+                  <div className="mt-2 flex items-center gap-2 pl-6">
+                    <span className="text-slate-600">Amount (Rs):</span>
+                    <Input type="number" value={examAmt} onChange={(e) => setExamAmt(e.target.value)} className="w-28" />
+                    <span className="text-xs text-slate-400">applied to every active student</span>
+                  </div>
+                )}
+              </div>
               <p className="text-amber-700">The new month's charges apply immediately and appear on the next bills.</p>
             </div>
           )}
@@ -152,6 +171,7 @@ function InvoicesTab() {
   const [preview, setPreview] = useState<PdfPreview | null>(null);
   const [feeEdit, setFeeEdit] = useState<{ open: boolean; invoiceId: number | null; studentId: number | null }>({ open: false, invoiceId: null, studentId: null });
   const [ledgerId, setLedgerId] = useState<number | null>(null);
+  const [correctId, setCorrectId] = useState<number | null>(null);
 
   // ---- list filters ----
   const [listClass, setListClass] = useState('');
@@ -253,15 +273,15 @@ function InvoicesTab() {
   // ---- payment dialog ----
   const [openPay, setOpenPay] = useState(false);
   const [payRow, setPayRow] = useState<any>(null);
-  const [pay, setPay] = useState<any>({ amount: '', less: '', method: 'CASH', reference: '' });
-  function startPay(row: any) { setPayRow(row); setPay({ amount: String(row.due ?? ''), less: '', method: 'CASH', reference: '' }); setOpenPay(true); }
+  const [pay, setPay] = useState<any>({ amount: '', less: '', method: 'CASH', reference: '', manualReceiptNo: '' });
+  function startPay(row: any) { setPayRow(row); setPay({ amount: String(row.due ?? ''), less: '', method: 'CASH', reference: '', manualReceiptNo: '' }); setOpenPay(true); }
   async function collect(printReceipt: boolean) {
     if (!payRow) return;
     try {
-      const res = await api.post(`/fees/${payRow.id}/pay`, { amount: Number(pay.amount || 0), less: Number(pay.less || 0), method: pay.method, reference: pay.reference });
+      const res = await api.post(`/fees/${payRow.id}/pay`, { amount: Number(pay.amount || 0), less: Number(pay.less || 0), method: pay.method, reference: pay.reference, manualReceiptNo: pay.manualReceiptNo });
       const { receiptNo, paymentId } = res.data || {};
       toast(`Payment recorded · ${receiptNo}`); setOpenPay(false); reload();
-      if (printReceipt && paymentId) setPreview({ url: `/pdf/receipt/${paymentId}`, filename: `${receiptNo}.pdf`, title: 'Fee Receipt' });
+      if (printReceipt && paymentId) setPreview({ url: `/pdf/receipt/${paymentId}`, filename: `${String(receiptNo).replace(/\//g, '-')}.pdf`, title: 'Fee Receipt' });
     } catch (e) { toast(apiError(e), 'error'); }
   }
 
@@ -285,6 +305,7 @@ function InvoicesTab() {
     ...COMPONENTS.map((c) => ({ key: c.key, header: c.header, className: 'text-right whitespace-nowrap', render: (r: any) => c.key === 'monthlyTuition' ? <MonthlyCell m={r.monthly} /> : money(r.components?.[c.key]) })),
     { key: 'total', header: 'Total', className: 'text-right font-medium', render: (r) => inr(r.total) },
     { key: 'paid', header: 'Paid', className: 'text-right font-medium text-green-600', render: (r) => inr(r.paid) },
+    { key: 'concession', header: 'Less', className: 'text-right font-medium text-amber-600', render: (r) => r.concession ? inr(r.concession) : <span className="text-slate-400">—</span> },
     { key: 'due', header: 'Dues', className: 'text-right', render: (r) => (
       <span className={`inline-block rounded-md px-2.5 py-1 text-sm font-semibold ${r.due > 0 ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'}`}>{inr(r.due)}</span>
     ) },
@@ -296,7 +317,8 @@ function InvoicesTab() {
         <DropdownMenuContent>
           <DropdownMenuItem onSelect={() => setFeeEdit({ open: true, invoiceId: r.id, studentId: r.studentId })}><Pencil className="size-4" /> Edit Fees</DropdownMenuItem>
           <DropdownMenuItem onSelect={() => setPreview({ url: `/pdf/intimation/${r.id}`, filename: `intimation-${r.id}.pdf`, title: 'Fee Intimation Card' })}><FileText className="size-4" /> Intimation</DropdownMenuItem>
-          {r.status !== 'PAID' && <DropdownMenuItem onSelect={() => startPay(r)}><Wallet className="size-4" /> Collect Payment</DropdownMenuItem>}
+          <DropdownMenuItem onSelect={() => startPay(r)}><Wallet className="size-4" /> Collect Payment</DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => setCorrectId(r.studentId)}><Undo2 className="size-4" /> Paid Correction</DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem onSelect={() => setLedgerId(r.studentId)}><ScrollText className="size-4" /> Record / Ledger</DropdownMenuItem>
         </DropdownMenuContent>
@@ -327,6 +349,15 @@ function InvoicesTab() {
           variant="outline"
           size="sm"
           className="ml-auto"
+          disabled={!filteredInvoices.length}
+          title={listClass ? 'Export this class’s fee register as a PDF (Windows-safe)' : 'Export the fee register for all classes as a PDF (Windows-safe)'}
+          onClick={() => setPreview({ url: `/pdf/fee-register${listClass ? `?classId=${listClass}` : ''}`, filename: 'fee-register.pdf', title: listClass ? `Fee Register · Class ${classes?.find((c: any) => String(c.id) === listClass)?.name ?? ''}` : 'Fee Register · All Classes' })}
+        >
+          <FileText className="size-4" /> Export PDF
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
           disabled={!filteredInvoices.length}
           title="Prints the listed bills 4 to an A4 sheet — no A6 paper needed; cut along the dashed lines"
           onClick={() => setPreview({ url: `/pdf/bills?ids=${filteredInvoices.map((r: any) => r.id).join(',')}`, filename: 'bills-4up.pdf', title: `Fee Bills · 4 per A4 (${filteredInvoices.length})` })}
@@ -364,6 +395,7 @@ function InvoicesTab() {
                 </Select>
               </Field>
               <Field label="Reference"><Input value={pay.reference} onChange={(e) => setPay({ ...pay, reference: e.target.value })} /></Field>
+              <Field label="Receipt No (optional)"><Input value={pay.manualReceiptNo} onChange={(e) => setPay({ ...pay, manualReceiptNo: e.target.value })} placeholder="Auto if left blank" /></Field>
               <div className="col-span-2 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
                 Balance cleared this time: <b>{inr(Number(pay.amount || 0) + Number(pay.less || 0))}</b>
                 <span className="text-slate-400"> ({inr(pay.amount || 0)} paid + {inr(pay.less || 0)} less)</span>
@@ -387,7 +419,77 @@ function InvoicesTab() {
         onClose={() => setLedgerId(null)}
         onPreview={setPreview}
       />
+
+      <PaidCorrectionDialog studentId={correctId} onClose={() => setCorrectId(null)} onChanged={reload} />
     </div>
+  );
+}
+
+/* ================================================ Paid correction (revert payments) */
+function PaidCorrectionDialog({ studentId, onClose, onChanged }: { studentId: number | null; onClose: () => void; onChanged: () => void }) {
+  const toast = useToast();
+  const [led, setLed] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState<number | null>(null);
+
+  async function load() {
+    if (studentId == null) return;
+    setLoading(true);
+    try { const { data } = await api.get(`/fees/ledger/${studentId}`); setLed(data); }
+    catch (e) { toast(apiError(e), 'error'); }
+    finally { setLoading(false); }
+  }
+  useEffect(() => { setLed(null); if (studentId != null) load(); /* eslint-disable-next-line */ }, [studentId]);
+
+  async function revert(p: any) {
+    if (!confirm(`Revert this collection of ${inr(p.amount)}${p.less ? ` (+ ${inr(p.less)} less)` : ''}? This removes the payment and increases the balance due.`)) return;
+    setBusy(p.id);
+    try {
+      await api.delete(`/fees/payment/${p.id}`);
+      toast('Payment reverted');
+      await load();
+      onChanged();
+    } catch (e) { toast(apiError(e), 'error'); }
+    finally { setBusy(null); }
+  }
+
+  const payments = led?.payments || [];
+  return (
+    <Dialog open={studentId !== null} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-lg" title="Paid Correction" footer={<Button variant="secondary" onClick={onClose}>Close</Button>}>
+        {loading ? <Loading label="Loading payments…" /> : (
+          <div className="space-y-3">
+            {led && (
+              <div className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2 text-sm">
+                <span className="font-medium text-slate-700">{led.student?.name}</span>
+                <span className="text-slate-500">Due <b className={led.totals?.due > 0 ? 'text-red-600' : 'text-green-600'}>{inr(led.totals?.due || 0)}</b></span>
+              </div>
+            )}
+            <p className="text-xs text-slate-400">Revert a wrongly-collected payment. It's removed one at a time and the balance due is recalculated.</p>
+            {payments.length === 0 ? (
+              <div className="py-8 text-center text-sm text-slate-400">No payments recorded for this student.</div>
+            ) : (
+              <div className="divide-y divide-slate-100 rounded-lg border border-slate-200">
+                {payments.map((p: any) => (
+                  <div key={p.id} className="flex items-center gap-3 px-3 py-2.5">
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-medium text-slate-800">
+                        {inr(p.amount)}{p.less ? <span className="text-slate-400"> + {inr(p.less)} less</span> : null}
+                        <span className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] uppercase text-slate-500">{p.method}</span>
+                      </div>
+                      <div className="text-xs text-slate-400">{p.receiptNo} · {formatBS(p.paidAt)}</div>
+                    </div>
+                    <Button size="sm" variant="outline" className="text-red-600" disabled={busy === p.id} onClick={() => revert(p)}>
+                      {busy === p.id ? 'Reverting…' : 'Revert'}
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -395,7 +497,7 @@ function InvoicesTab() {
 const STRUCT_COLS: { key: string; label: string }[] = [
   { key: 'monthlyTuition', label: 'Monthly Tuition' },
   { key: 'annualCharge', label: 'Annual' },
-  { key: 'computerFee', label: 'Computer' },
+  { key: 'computerFee', label: 'Computer/mo' },
   { key: 'transportFee', label: 'Transport' },
   { key: 'examFee', label: 'Exam' },
   { key: 'miscCharge', label: 'Misc' },
@@ -419,7 +521,7 @@ function FeeStructureEditor() {
   if (loading) return <Loading />;
   return (
     <div>
-      <p className="mb-3 text-sm text-slate-500">Set the standard charges for each class. Saving updates every existing bill in that class (monthly tuition and charges), and pre-fills new bills. Transportation is billed only to students who use the service.</p>
+      <p className="mb-3 text-sm text-slate-500">Set the standard charges for each class. Monthly Tuition and Computer are billed every month; Annual recurs yearly; Exam and Misc are one-time. Saving updates every existing bill in that class and pre-fills new bills. Transportation is billed only to students who use the service.</p>
       <Table>
         <THead>
           <TR className="hover:bg-transparent">

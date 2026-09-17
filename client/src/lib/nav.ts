@@ -56,11 +56,12 @@ export const NAV: NavGroup[] = [
         label: 'Fee Management', icon: Wallet, roles: A, children: [
           { to: '/fees', label: 'Billing & Ledgers', icon: Receipt, roles: A },
           { to: '/fees/structure', label: 'Fee Structure', icon: BookOpen, roles: A },
+          { to: '/collections', label: 'Collection Record', icon: Landmark, roles: A },
           { to: '/audit', label: 'Audit Report', icon: Landmark, roles: A },
         ],
       },
       { to: '/expenses', label: 'Expenses', icon: Receipt, roles: A },
-      { to: '/payroll', label: 'Payroll', icon: Wallet, roles: A },
+      { to: '/salary', label: 'Salary', icon: Wallet, roles: A },
     ],
   },
   {

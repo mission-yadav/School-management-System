@@ -18,9 +18,10 @@ import subjectRoutes from './routes/subjects.js';
 import attendanceRoutes from './routes/attendance.js';
 import examRoutes from './routes/exams.js';
 import feeRoutes from './routes/fees.js';
+import collectionRoutes from './routes/collections.js';
 import certificateRoutes from './routes/certificates.js';
 import expenseRoutes from './routes/expenses.js';
-import payrollRoutes from './routes/payroll.js';
+import salaryRoutes from './routes/salary.js';
 import reportRoutes from './routes/reports.js';
 import searchRoutes from './routes/search.js';
 import settingsRoutes from './routes/settings.js';
@@ -30,6 +31,8 @@ import timetableRoutes from './routes/timetable.js';
 import pdfRoutes from './routes/pdf.js';
 
 const app = express();
+// Behind a hosting provider's TLS proxy (Render etc.) so secure cookies / req.ip work.
+if (process.env.NODE_ENV === 'production') app.set('trust proxy', 1);
 app.use(cors({ origin: process.env.CLIENT_ORIGIN || 'http://localhost:5173', credentials: true }));
 app.use(express.json({ limit: '5mb' }));
 app.use(cookieParser());
@@ -47,9 +50,10 @@ app.use('/api/subjects', subjectRoutes);
 app.use('/api/attendance', attendanceRoutes);
 app.use('/api/exams', examRoutes);
 app.use('/api/fees', feeRoutes);
+app.use('/api/collections', collectionRoutes);
 app.use('/api/certificates', certificateRoutes);
 app.use('/api/expenses', expenseRoutes);
-app.use('/api/payroll', payrollRoutes);
+app.use('/api/salary', salaryRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/search', searchRoutes);
 app.use('/api/settings', settingsRoutes);
@@ -58,8 +62,10 @@ app.use('/api/events', eventRoutes);
 app.use('/api/timetable', timetableRoutes);
 app.use('/api/pdf', pdfRoutes);
 
-// In the packaged desktop app, serve the built client and fall back to index.html (SPA).
-const clientDist = process.env.CLIENT_DIST;
+// Serve the built client and fall back to index.html (SPA) — used by the packaged desktop
+// app and by the hosted web/PWA deployment. Resolve to absolute so a relative CLIENT_DIST
+// (e.g. "client/dist" on the host) works with res.sendFile.
+const clientDist = process.env.CLIENT_DIST ? path.resolve(process.env.CLIENT_DIST) : undefined;
 if (clientDist) {
   app.use(express.static(clientDist));
   app.use((req, res, next) => {
@@ -81,23 +87,12 @@ async function ensureAdmin() {
   console.log(`✅ Seeded admin -> ${email} / ${password}`);
 }
 
-// Lightweight forward-only migrations for an already-installed (user-data) SQLite DB:
-// add any columns missing from an older database (only applied when absent).
-async function ensureSchema() {
-  const hasColumn = async (table: string, col: string) => {
-    const rows = await prisma.$queryRawUnsafe<any[]>(`PRAGMA table_info("${table}")`);
-    return Array.isArray(rows) && rows.some((r) => r.name === col);
-  };
-  const adds: [string, string, string][] = [
-    ['Class', 'order', 'ALTER TABLE "Class" ADD COLUMN "order" INTEGER NOT NULL DEFAULT 0'],
-  ];
-  for (const [table, col, sql] of adds) {
-    try { if (!(await hasColumn(table, col))) await prisma.$executeRawUnsafe(sql); } catch { /* ignore */ }
-  }
-}
+// Schema is now owned centrally on the shared PostgreSQL (Neon) database and applied
+// once via `prisma db push`/migrate — NOT per-device at startup. (The old SQLite-only
+// PRAGMA/ALTER hack was removed with the move to Postgres.) Each device's server just
+// connects and ensures an admin exists.
 
 const PORT = Number(process.env.PORT || 4000);
-ensureSchema()
-  .then(ensureAdmin)
+ensureAdmin()
   .then(() => app.listen(PORT, () => console.log(`🚀 SMS API on http://localhost:${PORT}`)))
   .catch((e) => { console.error('Startup failed:', e); process.exit(1); });

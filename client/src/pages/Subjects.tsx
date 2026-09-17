@@ -25,6 +25,11 @@ export default function Subjects() {
   const [credits, setCredits] = useState('');
   const [classId, setClassId] = useState('');
   const [teacherId, setTeacherId] = useState('');
+  const [theoryFull, setTheoryFull] = useState('50');
+  const [practicalFull, setPracticalFull] = useState('50');
+  const [monthlyFull, setMonthlyFull] = useState('20');
+  const [inTerminal, setInTerminal] = useState(true);
+  const [inMonthly, setInMonthly] = useState(true);
 
   function openAdd() {
     setEditing(null);
@@ -33,6 +38,11 @@ export default function Subjects() {
     setCredits('');
     setClassId(filterClassId || '');
     setTeacherId('');
+    setTheoryFull('50');
+    setPracticalFull('50');
+    setMonthlyFull('20');
+    setInTerminal(true);
+    setInMonthly(true);
     setOpen(true);
   }
 
@@ -43,6 +53,11 @@ export default function Subjects() {
     setCredits(row.credits != null ? String(row.credits) : '');
     setClassId(row.classId != null ? String(row.classId) : '');
     setTeacherId(row.teacherId != null ? String(row.teacherId) : '');
+    setTheoryFull(row.theoryFull != null ? String(row.theoryFull) : '50');
+    setPracticalFull(row.practicalFull != null ? String(row.practicalFull) : '50');
+    setMonthlyFull(row.monthlyFull != null ? String(row.monthlyFull) : '20');
+    setInTerminal(row.inTerminal !== false);
+    setInMonthly(row.inMonthly !== false);
     setOpen(true);
   }
 
@@ -55,6 +70,11 @@ export default function Subjects() {
         credits: credits ? Number(credits) : null,
         classId: classId ? Number(classId) : null,
         teacherId: teacherId ? Number(teacherId) : null,
+        theoryFull: theoryFull === '' ? 0 : Number(theoryFull),
+        practicalFull: practicalFull === '' ? 0 : Number(practicalFull),
+        monthlyFull: monthlyFull === '' ? 0 : Number(monthlyFull),
+        inTerminal,
+        inMonthly,
       };
       if (editing) {
         await api.put(`/subjects/${editing.id}`, payload);
@@ -85,8 +105,8 @@ export default function Subjects() {
 
   const columns: Column<any>[] = [
     { header: 'Subject', cell: (r) => r.name },
-    { header: 'Code', cell: (r) => r.code || '—' },
-    { header: 'Credits', cell: (r) => r.credits ?? '—' },
+    { header: 'Full Marks', cell: (r) => `${(r.theoryFull ?? 0) + (r.practicalFull ?? 0)} (${r.theoryFull ?? 0}+${r.practicalFull ?? 0})` },
+    { header: 'Used In', cell: (r) => [r.inTerminal !== false ? 'Terminal' : null, r.inMonthly !== false ? 'Monthly' : null].filter(Boolean).join(' + ') || '—' },
     { header: 'Class', cell: (r) => r.className || '—' },
     { header: 'Teacher', cell: (r) => r.teacherName || '—' },
     {
@@ -158,6 +178,33 @@ export default function Subjects() {
             <Field>
               <Label>Credits</Label>
               <Input type="number" value={credits} onChange={(e) => setCredits(e.target.value)} placeholder="e.g. 4" />
+            </Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field>
+                <Label>Theory Full Marks</Label>
+                <Input type="number" value={theoryFull} onChange={(e) => setTheoryFull(e.target.value)} placeholder="50" />
+              </Field>
+              <Field>
+                <Label>Practical Full Marks</Label>
+                <Input type="number" value={practicalFull} onChange={(e) => setPracticalFull(e.target.value)} placeholder="50 (0 = none)" />
+              </Field>
+            </div>
+            <p className="-mt-2 text-xs text-slate-500">Total full marks = Theory + Practical (e.g. 50 + 50 = 100; set Practical to 0 for a dictionary/50-mark subject).</p>
+            <Field>
+              <Label>Monthly Test Full Marks</Label>
+              <Input type="number" value={monthlyFull} onChange={(e) => setMonthlyFull(e.target.value)} placeholder="20" />
+            </Field>
+            <p className="-mt-2 text-xs text-slate-500">Full marks for this subject in a Monthly test (default 20). Pass mark is 40% of it.</p>
+            <Field>
+              <Label>Include in exams</Label>
+              <div className="flex gap-5 pt-1">
+                <label className="flex items-center gap-2 text-sm text-slate-700">
+                  <input type="checkbox" className="size-4 accent-[#262081]" checked={inTerminal} onChange={(e) => setInTerminal(e.target.checked)} /> Terminal / Final
+                </label>
+                <label className="flex items-center gap-2 text-sm text-slate-700">
+                  <input type="checkbox" className="size-4 accent-[#262081]" checked={inMonthly} onChange={(e) => setInMonthly(e.target.checked)} /> Monthly Test
+                </label>
+              </div>
             </Field>
             <Field>
               <Label>Class</Label>
