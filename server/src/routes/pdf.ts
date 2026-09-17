@@ -1033,10 +1033,11 @@ function drawNebSheet(doc: PDFKit.PDFDocument, sheet: Sheet, school: SchoolInfo,
   if (monthly) {
     // Class & Roll pinned to the far right (short values → names get almost the full width);
     // Symbol No sits a little left of them since it's long.
-    const shortX = L + infoW - 90;
+    const shortW = 128; // wide enough for word-form classes (e.g. "TWELVE") without wrapping
+    const shortX = L + infoW - shortW;
     const symX = L + infoW - 250;
-    info('Name:  ', sheet.student.name, L, shortX - L - 6, true); info('Class:  ', cls, shortX, 90); y += 21;
-    info("Father's Name:  ", extra.fatherName || '—', L, shortX - L - 6); info('Roll No:  ', roll, shortX, 90); y += 21;
+    info('Name:  ', sheet.student.name, L, shortX - L - 6, true); info('Class:  ', cls, shortX, shortW); y += 21;
+    info("Father's Name:  ", extra.fatherName || '—', L, shortX - L - 6); info('Roll No:  ', roll, shortX, shortW); y += 21;
     info('Address:  ', extra.address || '—', L, symX - L - 6); info('Symbol No:  ', symbol, symX, 250); y += 21;
   } else {
     // terminal has a photo on the right → keep a single column so nothing clips
