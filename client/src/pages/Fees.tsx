@@ -274,15 +274,18 @@ function InvoicesTab() {
   const [openPay, setOpenPay] = useState(false);
   const [payRow, setPayRow] = useState<any>(null);
   const [pay, setPay] = useState<any>({ amount: '', less: '', method: 'CASH', reference: '', manualReceiptNo: '' });
-  function startPay(row: any) { setPayRow(row); setPay({ amount: String(row.due ?? ''), less: '', method: 'CASH', reference: '', manualReceiptNo: '' }); setOpenPay(true); }
+  const [paying, setPaying] = useState(false);
+  function startPay(row: any) { setPayRow(row); setPay({ amount: String(row.due ?? ''), less: '', method: 'CASH', reference: '', manualReceiptNo: '' }); setPaying(false); setOpenPay(true); }
   async function collect(printReceipt: boolean) {
-    if (!payRow) return;
+    if (!payRow || paying) return; // guard against double-submit (slow connection → double click → duplicate payment)
+    setPaying(true);
     try {
       const res = await api.post(`/fees/${payRow.id}/pay`, { amount: Number(pay.amount || 0), less: Number(pay.less || 0), method: pay.method, reference: pay.reference, manualReceiptNo: pay.manualReceiptNo });
       const { receiptNo, paymentId } = res.data || {};
       toast(`Payment recorded · ${receiptNo}`); setOpenPay(false); reload();
       if (printReceipt && paymentId) setPreview({ url: `/pdf/receipt/${paymentId}`, filename: `${String(receiptNo).replace(/\//g, '-')}.pdf`, title: 'Fee Receipt' });
     } catch (e) { toast(apiError(e), 'error'); }
+    finally { setPaying(false); }
   }
 
   async function remove(id: number) {
@@ -383,7 +386,7 @@ function InvoicesTab() {
 
       {/* payment */}
       <Dialog open={openPay} onOpenChange={setOpenPay}>
-        <DialogContent title="Collect Payment" footer={<><Button variant="secondary" onClick={() => setOpenPay(false)}>Cancel</Button><Button variant="outline" onClick={() => collect(false)}>Collect</Button><Button onClick={() => collect(true)}>Collect & Receipt</Button></>}>
+        <DialogContent title="Collect Payment" footer={<><Button variant="secondary" onClick={() => setOpenPay(false)} disabled={paying}>Cancel</Button><Button variant="outline" onClick={() => collect(false)} disabled={paying}>{paying ? 'Collecting…' : 'Collect'}</Button><Button onClick={() => collect(true)} disabled={paying}>{paying ? 'Collecting…' : 'Collect & Receipt'}</Button></>}>
           {payRow && (
             <div className="grid grid-cols-2 gap-3">
               <div className="col-span-2 text-sm text-slate-500">{payRow.studentName} — Due {inr(payRow.due)}</div>

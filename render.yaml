@@ -9,6 +9,7 @@ services:
     name: janaki-school
     runtime: node
     plan: free
+    branch: feat/shared-neon-db  # the live app branch (repo default `main` is stale); Render builds + auto-redeploys from here
     region: singapore          # closest to Nepal + matches the Neon (ap-southeast-1) region
     buildCommand: npm run build
     startCommand: npm start

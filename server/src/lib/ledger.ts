@@ -30,6 +30,7 @@ export function currentBS(): BSPeriod {
 }
 
 const BILLING_KEY = 'billingPeriod';
+const ACCRUAL_STAMP_KEY = 'feeAccrualStamp'; // marks the billing-month + roster already accrued (skip redundant scans)
 
 /** The admin-controlled billing month (BS). Charges accrue up to this month, not the calendar
  *  month — the admin advances it manually. Initialised to the real current month on first use. */
@@ -263,8 +264,17 @@ export async function ensureLedger(studentId: number, period?: BSPeriod): Promis
  * createMany/deleteMany) instead of N+1 per-student round-trips, so listing fees
  * over a remote (Neon) database stays fast. Idempotent: a second run is a no-op.
  */
-export async function ensureAllLedgers(): Promise<void> {
+export async function ensureAllLedgers(force = false): Promise<void> {
   const { year, month } = await getBillingPeriod();
+  // Fast path: accrual only becomes stale when the billing month advances or the active roster
+  // changes. If neither moved since the last run, skip the whole bulk scan (two cheap queries
+  // instead of loading every ledger + all its items) — this is what the fee list hits each load.
+  const activeCount = await prisma.student.count({ where: { status: 'ACTIVE' } });
+  const stamp = `${year}-${month}:${activeCount}`;
+  if (!force) {
+    const row = await prisma.setting.findUnique({ where: { key: ACCRUAL_STAMP_KEY } });
+    if (row?.value === stamp) return;
+  }
   const students = await prisma.student.findMany({
     where: { status: 'ACTIVE' },
     include: { class: { include: { feeStructure: true } } },
@@ -354,6 +364,9 @@ export async function ensureAllLedgers(): Promise<void> {
     await prisma.feeItem.deleteMany({ where: { invoiceId: { in: annualExemptInvIds }, description: 'Annual Charge' } });
   if (itemsToCreate.length)
     await prisma.feeItem.createMany({ data: itemsToCreate });
+
+  // mark this (billing month + roster) as fully accrued so the next list load can skip the scan
+  await prisma.setting.upsert({ where: { key: ACCRUAL_STAMP_KEY }, update: { value: stamp }, create: { key: ACCRUAL_STAMP_KEY, value: stamp } });
 }
 
 /**

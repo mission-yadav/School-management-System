@@ -49,7 +49,11 @@ router.get('/', requireRole('ADMIN'), asyncHandler(async (req, res) => {
   const invoices = await prisma.feeInvoice.findMany({
     where,
     orderBy: [{ student: { name: 'asc' } }, { createdAt: 'desc' }],
-    include: { items: true, payments: true, student: { include: { class: { select: { id: true, name: true } } } } },
+    include: {
+      items: { select: { description: true, amount: true, bsMonth: true, bsYear: true } },
+      payments: { select: { amount: true, less: true } },
+      student: { select: { name: true, iemis: true, feeFree: true, class: { select: { id: true, name: true } } } },
+    },
   });
   res.json(invoices.map((inv) => {
     const t = invoiceTotals(inv);
