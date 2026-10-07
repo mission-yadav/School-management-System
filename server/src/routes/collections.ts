@@ -3,7 +3,7 @@ import Pkg from 'nepali-date-converter';
 import prisma from '../prisma.js';
 import { authRequired, requireRole } from '../middleware/auth.js';
 import { asyncHandler } from '../lib/http.js';
-import { BS_MONTHS } from '../lib/ledger.js';
+import { BS_MONTHS, buildSerialMap, serialNo, getBillingPeriod } from '../lib/ledger.js';
 
 // unwrap the double-wrapped default export to the constructor (same pattern as lib/nepaliDate)
 let NepaliDate: any = Pkg;
@@ -27,6 +27,10 @@ router.get('/', requireRole('ADMIN'), asyncHandler(async (_req, res) => {
     include: { invoice: { include: { student: { include: { class: { select: { name: true } } } } } } },
   });
 
+  // receipt number = manual number if entered, else the JSS-<SN>/<year> serial (same as the receipt PDF)
+  const { year } = await getBillingPeriod();
+  const serialMap = await buildSerialMap();
+
   res.json(payments.map((p) => {
     let bsYear = 0, bsMonth = 0, bsDay = 0, bsMonthName = '', dateLabel = '';
     try {
@@ -37,11 +41,13 @@ router.get('/', requireRole('ADMIN'), asyncHandler(async (_req, res) => {
       dateLabel = n.format('DD MMMM YYYY');
     } catch { /* leave defaults */ }
     const stu = p.invoice.student;
+    const receiptNo = (p.manualReceiptNo && p.manualReceiptNo.trim()) || serialNo(serialMap.get(stu.id), year);
     return {
       id: p.id,
       paidAt: p.paidAt,
       amount: p.amount,
       method: p.method,
+      receiptNo,
       studentId: stu.id,
       studentName: stu.name,
       className: stu.class?.name || null,
