@@ -115,7 +115,7 @@ export function StudentLedgerDialog({ open, studentId, onClose, onPreview }: {
                     {d.payments.map((p: any) => (
                       <TR key={p.id}>
                         <TD>{formatBS(p.paidAt)}</TD>
-                        <TD className="font-mono text-xs">{p.receiptNo}</TD>
+                        <TD className="font-mono text-xs">{p.receiptNo || '—'}</TD>
                         <TD>{p.method}</TD>
                         <TD className="text-right">{inr(p.amount)}</TD>
                         <TD className="text-right text-red-600">{p.less ? inr(p.less) : '—'}</TD>

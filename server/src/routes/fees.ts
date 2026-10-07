@@ -231,7 +231,6 @@ router.get('/ledger/:studentId', requireRole('ADMIN'), asyncHandler(async (req, 
   if (!student || !inv) throw new AppError(404, 'Not found');
   const t = invoiceTotals(inv);
   const { year, month } = await getBillingPeriod();
-  const sn = (await buildSerialMap()).get(studentId); // display bill/receipt no as JSS-<SN>/<year>
 
   const monthly = inv.items.filter((i) => i.bsMonth)
     .sort((a, b) => (a.bsYear! - b.bsYear!) || (a.bsMonth! - b.bsMonth!))
@@ -258,7 +257,7 @@ router.get('/ledger/:studentId', requireRole('ADMIN'), asyncHandler(async (req, 
     discount: inv.discount, fine: inv.fine, previousPaid: opening?.amount || 0,
     totals: { billed: t.total, paid: t.paid, concession: t.concession, due: t.due },
     status: inv.status, dueDate: inv.dueDate,
-    payments: realPayments.map((p) => ({ id: p.id, receiptNo: serialNo(sn, year), amount: p.amount, less: p.less, method: p.method, paidAt: p.paidAt })),
+    payments: realPayments.map((p) => ({ id: p.id, receiptNo: (p.manualReceiptNo && p.manualReceiptNo.trim()) || null, amount: p.amount, less: p.less, method: p.method, paidAt: p.paidAt })),
   });
 }));
 
