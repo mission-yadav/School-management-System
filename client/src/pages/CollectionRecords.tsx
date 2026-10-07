@@ -10,7 +10,7 @@ import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { inr } from '@/lib/utils';
 
 type Row = {
-  id: number; paidAt: string; amount: number; method: string; receiptNo: string;
+  id: number; paidAt: string; amount: number; method: string; receiptNo: string | null;
   studentId: number; studentName: string; className: string | null;
   bsYear: number; bsMonth: number; bsMonthName: string; bsDay: number; dateLabel: string;
 };
@@ -173,7 +173,7 @@ export default function CollectionRecords() {
               <TR key={r.id}>
                 <TD className="text-slate-500">{i + 1}</TD>
                 <TD>{r.dateLabel}</TD>
-                <TD className="font-medium tabular-nums text-slate-700">{r.receiptNo}</TD>
+                <TD className="font-medium tabular-nums text-slate-700">{r.receiptNo || '—'}</TD>
                 <TD className="font-medium text-slate-900">{r.studentName}</TD>
                 <TD>{r.className || '—'}</TD>
                 <TD className="text-right font-medium">{inr(r.amount)}</TD>
