@@ -3,18 +3,25 @@ generator client {
   // "native" for local dev on this machine; "windows" so the packaged Windows app
   // ships the Windows query engine.
   binaryTargets = ["native", "windows"]
+  // driverAdapters: connect through node-postgres (Node's TLS/BoringSSL) instead of the
+  // engine's native TLS (Windows Schannel), which fails the Neon handshake on Windows 7.
+  previewFeatures = ["driverAdapters"]
 }
 
 datasource db {
-  // SQLite: embedded, zero-install — the app ships a single database file.
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  // PostgreSQL: one shared cloud database (Neon) so every device sees the same data.
+  //   url        -> the POOLED Neon endpoint (…-pooler…), used by the running app.
+  //   directUrl  -> the DIRECT (unpooled) endpoint, used by `prisma db push`/migrate.
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_DATABASE_URL")
 }
 
-// NOTE: SQLite (via Prisma) has no native enum / Json / Date types, so:
-//  - former enums are plain String columns (values unchanged, e.g. "ADMIN")
-//  - former Json columns are String columns holding JSON text
-//  - former @db.Date columns are plain DateTime
+// NOTE: this schema was kept portable while the app ran on SQLite, so on PostgreSQL:
+//  - former enums remain plain String columns (values unchanged, e.g. "ADMIN")
+//  - JSON columns (Setting.value, Certificate.dataJson) remain String (hold JSON text)
+//  - former @db.Date columns remain plain DateTime
+// Search queries already use `mode: 'insensitive'`, which PostgreSQL honours natively.
 
 // ============================================================ AUTH / USERS
 model User {
@@ -102,6 +109,7 @@ model Student {
   parentId  Int?
 
   attendance   StudentAttendance[]
+  examAttendance ExamAttendance[]
   results      Result[]
   invoices     FeeInvoice[]
   certificates Certificate[]
@@ -170,6 +178,11 @@ model Subject {
   name      String
   code      String?
   credits   Int    @default(1)
+  theoryFull    Int @default(50) // theory full marks (terminal)
+  practicalFull Int @default(50) // practical full marks (terminal; 0 = no practical, e.g. dictionaries)
+  monthlyFull   Int @default(20) // full marks for the Monthly test
+  inTerminal    Boolean @default(true)  // included in 1st/2nd/3rd Terminal & Final exams
+  inMonthly     Boolean @default(true)  // included in Monthly tests
   class     Class  @relation(fields: [classId], references: [id], onDelete: Cascade)
   classId   Int
   teacher   User?  @relation(fields: [teacherId], references: [id], onDelete: SetNull)
@@ -302,6 +315,7 @@ model Payment {
   method       String        @default("CASH") // CASH | CARD | UPI | BANK_TRANSFER
   reference    String?
   receiptNo    String        @unique
+  manualReceiptNo String?     // optional receipt number typed by the accountant; shown on the receipt when set
   paidAt       DateTime      @default(now())
   receivedBy   User?         @relation(fields: [receivedById], references: [id], onDelete: SetNull)
   receivedById Int?
@@ -319,15 +333,29 @@ model Scholarship {
 
 // ============================================================ EXAMINATION
 model Exam {
-  id           Int      @id @default(autoincrement())
-  name         String
-  term         String?
-  sessionLabel String?
-  createdAt    DateTime @default(now())
+  id               Int      @id @default(autoincrement())
+  name             String
+  examType         String   @default("TERMINAL_1") // TERMINAL_1 | TERMINAL_2 | TERMINAL_3 | FINAL | MONTHLY
+  term             String?
+  sessionLabel     String?
+  totalWorkingDays Int?     // total working days in the exam period (for attendance)
+  createdAt        DateTime @default(now())
 
-  subjects ExamSubject[]
-  results  Result[]
-  classes  ExamClass[]
+  subjects   ExamSubject[]
+  results    Result[]
+  classes    ExamClass[]
+  attendance ExamAttendance[]
+}
+
+model ExamAttendance {
+  id          Int     @id @default(autoincrement())
+  exam        Exam    @relation(fields: [examId], references: [id], onDelete: Cascade)
+  examId      Int
+  student     Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  studentId   Int
+  presentDays Int     // days the student was present out of the exam's total working days
+
+  @@unique([examId, studentId])
 }
 
 model ExamClass {
@@ -360,8 +388,11 @@ model Result {
   subjectId   Int
   student     Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
   studentId   Int
-  marks       Float
+  marks       Float                      // total obtained (theory + practical)
   maxMarks    Float   @default(100)
+  theoryMarks    Float?                  // theory obtained (null if not entered)
+  practicalMarks Float?                  // practical obtained (null for no-practical subjects)
+  absent      Boolean @default(false)  // student was absent for this subject's exam
   enteredBy   User?   @relation(fields: [enteredById], references: [id], onDelete: SetNull)
   enteredById Int?
 
@@ -419,6 +450,41 @@ model Payslip {
   generatedAt  DateTime     @default(now())
 
   @@unique([employeeType, refId, month])
+}
+
+// Salary roster — the staff/teacher list printed on the monthly Salary sheet. Name, Post
+// and Total (monthly gross) are stored; Absent/TDS/Paid/Sign are left blank on the sheet
+// and filled in by hand each month.
+model SalaryEmployee {
+  id        Int      @id @default(autoincrement())
+  name      String
+  post      String?  // A.T, O.A, Sweeper, Principal, V.Principal, PT, …
+  idNo      String?  // the number shown in parentheses after the name (optional)
+  total     Float    @default(0) // monthly gross salary
+  order     Int      @default(0) // display order to match the physical sheet
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  payments  SalaryPayment[]
+}
+
+// One monthly salary payment for a staff member. TDS = 1% of salary; absent deduction =
+// (salary / days-in-that-BS-month) × absent days. Net "paid" defaults to salary − TDS −
+// absent deduction but can be overridden by the accountant.
+model SalaryPayment {
+  id              Int            @id @default(autoincrement())
+  employee        SalaryEmployee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employeeId      Int
+  bsYear          Int
+  bsMonth         Int            // 1-12
+  total           Float          @default(0) // salary snapshot at pay time
+  absentDays      Int            @default(0)
+  tds             Float          @default(0)
+  absentDeduction Float          @default(0)
+  paid            Float          @default(0) // net amount actually paid
+  paidAt          DateTime       @default(now())
+
+  @@unique([employeeId, bsYear, bsMonth])
 }
 
 // =========================================================== CERTIFICATES

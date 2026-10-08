@@ -1,6 +1,6 @@
 import { Download } from 'lucide-react';
 import { useFetch } from '@/lib/useFetch';
-import { downloadFile } from '@/lib/api';
+import { usePdfViewer } from '@/components/PdfViewer';
 import { formatBS } from '@/lib/nepaliDate';
 import { PageHeader, Loading } from '@/components/PageHeader';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -23,6 +23,7 @@ function Row({ label, value, bold, indent, color }: { label: string; value: numb
 
 export default function AuditReport() {
   const { data, loading } = useFetch<any>('/reports/audit');
+  const openPdf = usePdfViewer();
   if (loading || !data) return <Loading />;
 
   const ie = data.incomeExpenditure;
@@ -34,7 +35,7 @@ export default function AuditReport() {
       <PageHeader
         title="Audit Report"
         subtitle={`NFRS · As on ${formatBS(data.generatedAt)} · All figures in ${data.currency}`}
-        actions={<Button onClick={() => downloadFile('/pdf/audit', 'audit-report.pdf')}><Download className="size-4" /> Export PDF</Button>}
+        actions={<Button onClick={() => openPdf({ url: '/pdf/audit', filename: 'audit-report.pdf', title: 'Audit Report' })}><Download className="size-4" /> View PDF</Button>}
       />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">

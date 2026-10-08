@@ -5,6 +5,7 @@ import './index.css';
 
 import { AuthProvider, RequireAuth } from '@/context/auth';
 import { ToastProvider } from '@/components/ui/toast';
+import { PdfViewerProvider } from '@/components/PdfViewer';
 import Layout from '@/components/Layout';
 import Login from '@/pages/Login';
 import Stub from '@/pages/Stub';
@@ -21,8 +22,10 @@ import Attendance from '@/pages/Attendance';
 import Exams from '@/pages/Exams';
 import Timetable from '@/pages/Timetable';
 import Fees from '@/pages/Fees';
+import FeePinGate from '@/components/FeePinGate';
+import CollectionRecords from '@/pages/CollectionRecords';
 import Expenses from '@/pages/Expenses';
-import Payroll from '@/pages/Payroll';
+import Salary from '@/pages/Salary';
 import AuditReport from '@/pages/AuditReport';
 import Certificates from '@/pages/Certificates';
 import Reports from '@/pages/Reports';
@@ -32,11 +35,19 @@ import Settings from '@/pages/Settings';
 import GlobalSearch from '@/pages/GlobalSearch';
 import Assignments from '@/pages/teacher/Assignments';
 
+// Register the PWA service worker in production so the app is installable on phones.
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => { /* SW is a progressive enhancement */ });
+  });
+}
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <BrowserRouter>
       <AuthProvider>
         <ToastProvider>
+          <PdfViewerProvider>
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route element={<RequireAuth><Layout /></RequireAuth>}>
@@ -57,11 +68,15 @@ createRoot(document.getElementById('root')!).render(
                 <Route path="/staff" element={<Staff />} />
                 <Route path="/classes" element={<Classes />} />
                 <Route path="/subjects" element={<Subjects />} />
-                <Route path="/fees" element={<Fees />} />
-                <Route path="/fees/structure" element={<Fees />} />
+                {/* Fee Management — locked behind a 4-digit PIN */}
+                <Route element={<FeePinGate />}>
+                  <Route path="/fees" element={<Fees />} />
+                  <Route path="/fees/structure" element={<Fees />} />
+                  <Route path="/collections" element={<CollectionRecords />} />
+                  <Route path="/audit" element={<AuditReport />} />
+                </Route>
                 <Route path="/expenses" element={<Expenses />} />
-                <Route path="/payroll" element={<Payroll />} />
-                <Route path="/audit" element={<AuditReport />} />
+                <Route path="/salary" element={<Salary />} />
                 <Route path="/certificates" element={<Certificates />} />
                 <Route path="/reports" element={<Reports />} />
                 <Route path="/events" element={<Events />} />
@@ -80,6 +95,7 @@ createRoot(document.getElementById('root')!).render(
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
+          </PdfViewerProvider>
         </ToastProvider>
       </AuthProvider>
     </BrowserRouter>

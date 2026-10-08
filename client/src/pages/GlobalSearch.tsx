@@ -3,9 +3,12 @@ import { useNavigate } from 'react-router-dom';
 import api, { apiError } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { PageHeader, Loading, EmptyState } from '@/components/PageHeader';
+import { Trash2 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { useToast } from '@/components/ui/toast';
 import { SearchModeToggle, type SearchMode as Mode } from '@/components/SearchModeToggle';
 
@@ -26,6 +29,8 @@ export default function GlobalSearch() {
   const [q, setQ] = useState('');
   const [results, setResults] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [delRow, setDelRow] = useState<any>(null);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     const query = q.trim();
@@ -47,6 +52,21 @@ export default function GlobalSearch() {
 
   function openResult(r: any) {
     if (r.type === 'student') navigate(`/students/${r.id}`);
+  }
+
+  async function confirmDelete() {
+    if (!delRow) return;
+    setDeleting(true);
+    try {
+      await api.delete(`/students/${delRow.id}`);
+      toast({ title: 'Student deleted', description: `${delRow.label} and all their records were permanently removed.` });
+      setResults((rs) => rs.filter((x) => !(x.type === 'student' && x.id === delRow.id)));
+      setDelRow(null);
+    } catch (err) {
+      toast({ title: 'Delete failed', description: apiError(err), variant: 'destructive' });
+    } finally {
+      setDeleting(false);
+    }
   }
 
   return (
@@ -85,11 +105,30 @@ export default function GlobalSearch() {
                   {r.sublabel && <div className="text-sm text-slate-500">{r.sublabel}</div>}
                 </div>
                 <Badge>{r.type}</Badge>
+                {r.type === 'student' && (
+                  <Button variant="ghost" size="icon" title="Delete student" onClick={(e) => { e.stopPropagation(); setDelRow(r); }}>
+                    <Trash2 className="size-4 text-red-500" />
+                  </Button>
+                )}
               </CardContent>
             </Card>
           ))}
         </div>
       )}
+
+      <Dialog open={delRow !== null} onOpenChange={(o) => { if (!o) setDelRow(null); }}>
+        <DialogContent
+          title="Delete student?"
+          footer={<>
+            <Button variant="secondary" onClick={() => setDelRow(null)}>Cancel</Button>
+            <Button variant="destructive" onClick={confirmDelete} disabled={deleting}>{deleting ? 'Deleting…' : 'Delete permanently'}</Button>
+          </>}
+        >
+          <p className="text-sm text-slate-600">
+            This will <b>permanently delete {delRow?.label}</b> and all of their records — fees, exam results, attendance, certificates and more. This cannot be undone. You can then add a fresh student with the same details.
+          </p>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

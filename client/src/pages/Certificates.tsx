@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import api, { apiError, downloadFile } from '@/lib/api';
+import api, { apiError } from '@/lib/api';
 import { useFetch } from '@/lib/useFetch';
+import { usePdfViewer } from '@/components/PdfViewer';
 import { PageHeader, Loading, EmptyState } from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
@@ -26,6 +27,7 @@ function typeLabel(t: string) {
 
 export default function Certificates() {
   const toast = useToast();
+  const openPdf = usePdfViewer();
   const students = useFetch<any[]>('/students');
   const certificates = useFetch<any[]>('/certificates');
   const classes = useFetch<any[]>('/classes');
@@ -59,7 +61,7 @@ export default function Certificates() {
       certificates.refetch();
       const created = res.data;
       if (created?.id) {
-        downloadFile(`/pdf/certificate/${created.id}`, `${created.serialNo}.pdf`);
+        openPdf({ url: `/pdf/certificate/${created.id}`, filename: `${created.serialNo}.pdf`, title: 'Certificate' });
       }
     } catch (e) {
       toast.error(apiError(e));
@@ -92,9 +94,9 @@ export default function Certificates() {
           <Button
             size="sm"
             variant="outline"
-            onClick={() => downloadFile(`/pdf/certificate/${r.id}`, `${r.serialNo}.pdf`)}
+            onClick={() => openPdf({ url: `/pdf/certificate/${r.id}`, filename: `${r.serialNo}.pdf`, title: `Certificate — ${r.studentName}` })}
           >
-            Download PDF
+            View PDF
           </Button>
           <Button size="sm" variant="destructive" onClick={() => deleteCertificate(r.id)}>
             Delete
